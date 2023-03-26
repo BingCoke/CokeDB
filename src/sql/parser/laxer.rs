@@ -517,6 +517,7 @@ impl<'a> Laxer<'a> {
 
     fn term(&mut self) {
         while self.next_char_expect(' ').is_some() {}
+        while self.next_char_expect('\n').is_some() {}
     }
 }
 

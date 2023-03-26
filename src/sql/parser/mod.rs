@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::f32::consts::E;
 use std::iter::Peekable;
 
-use crate::sql::parser::ast::ColumnType;
+use crate::sql::parser::ast::{ColumnType, Value};
 use crate::sql::parser::laxer::{Keyword, Token};
 
 use self::ast::{BaseExpression, Column, FromItem, JoinType, OrderType};
@@ -434,8 +434,7 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-
-        todo!()
+        Ok(expressions)
     }
 
     fn parse_having_claues(&mut self) -> Result<Option<BaseExpression>> {
@@ -468,7 +467,7 @@ impl<'a> Parser<'a> {
             } else {
                 OrderType::DES
             };
-            orders.push((expression,order_type));
+            orders.push((expression, order_type));
             // 直到没有逗号分割表示结束
             if self.next_token_expect(Token::Comma).is_err() {
                 break;
@@ -477,10 +476,102 @@ impl<'a> Parser<'a> {
         Ok(orders)
     }
 
-    fn parse_expression(&self, min: u8) -> Result<BaseExpression> {
-        todo!()
+    /// 获得表达式， min表示当前expr中最小的优先级，如果小于min则return
+    fn parse_expression(&mut self, min: u8) -> Result<BaseExpression> {
+        // 查看有没有前缀运算符
+        let mut expr = if let Some(operation) = PrefixOperation::get_operation(self, min)? {
+            // 看到前缀之后递归比如 -(1+3)
+            operation.build_expresion(
+                self.parse_expression(operation.get_assoc() + operation.get_assoc())?,
+            )
+        } else {
+            self.get_atom_expression()?
+        };
+
+        if let Some(operation) = PostfixOperator::get_operation(self, min)? {
+            expr = operation.build_expresion(expr);
+        };
+
+        // !!! 这里是while循环，吐了debug半天 看的源码才想起是while
+        while let Some(operation) = InfixOperator::get_operation(self, min)? {
+            expr = operation.build_expresion(
+                expr,
+                self.parse_expression(operation.get_prec() + operation.get_assoc())?,
+            );
+        }
+
+        Ok(expr)
     }
 
+    /// function filed 常量(数字，字符串) 包括被括号包裹起来的可以将整体看作atom
+    fn get_atom_expression(&mut self) -> Result<BaseExpression> {
+        match self.next()? {
+            // 先解析常量
+            Token::Number(num) => {
+                // 判断一下是整型还是浮点性
+                if let Ok(i) = num.parse::<i64>() {
+                    Ok(BaseExpression::Value(Value::Integer(i)))
+                } else if let Ok(f) = num.parse::<f64>() {
+                    Ok(BaseExpression::Value(Value::Float(f)))
+                } else {
+                    Err(Error::Parse(format!("expect a number get {}!", num)))
+                }
+            }
+            Token::String(string) => Ok(BaseExpression::Value(Value::String(string))),
+            Token::Keyword(Keyword::Null) => Ok(BaseExpression::Value(Value::None)),
+            Token::Keyword(Keyword::True) => Ok(BaseExpression::Value(Value::Bool(true))),
+            Token::Keyword(Keyword::False) => Ok(BaseExpression::Value(Value::Bool(false))),
+            // 补上
+            Token::Keyword(Keyword::Infinity) => {
+                Ok(BaseExpression::Value(Value::Float(f64::INFINITY)))
+            }
+            Token::Keyword(Keyword::NaN) => Ok(BaseExpression::Value(Value::Float(f64::NAN))),
+
+            // 碰到括号包围的
+            Token::OpenParen => {
+                let expr = self.parse_expression(0)?;
+                self.next_token_expect(Token::CloseParen)?;
+                Ok(expr)
+            }
+            // function 列名
+            Token::Ident(ident) => {
+                // 看一下下一个是不是括号，如果是括号就是函数
+                if self.next_token_expect(Token::OpenParen).is_ok() {
+                    let mut arg = Vec::new();
+                    // 看到左括号截止
+                    // while self.next_token_expect(Token::CloseParen).is_err() {
+                    //     arg.push(self.parse_expression(0)?);
+                    //     self.next_token_expect(Token::Comma)?;
+                    // }
+                    loop {
+                        arg.push(self.parse_expression(0)?);
+                        if self.next_token_expect(Token::Comma).is_err() {
+                            break;
+                        }
+                    }
+                    self.next_token_expect(Token::CloseParen)?;
+                    Ok(BaseExpression::Function(ident, arg))
+                } else {
+                    // 不是函数就是字段
+                    let mut table = None;
+                    let mut filed = ident;
+                    // 有 点 说明是 table.filed
+                    if self.next_token_expect(Token::Period).is_ok() {
+                        table = Some(filed);
+                        filed = self.next_ident()?;
+                    }
+                    Ok(BaseExpression::Field(table, filed))
+                }
+            }
+            t => Err(Error::Parse(format!("expect get an atom get:{}", t))),
+        }
+    }
+
+    fn next(&mut self) -> Result<Token> {
+        self.laxer
+            .next()
+            .unwrap_or_else(|| Err(Error::Parse("unexpected end".into())))
+    }
     /// 传入闭包判断，如果返回ok则调用next,并返回token err就返回err
     fn next_token_judge<F>(&mut self, judge: F) -> Result<Token>
     where
@@ -493,6 +584,15 @@ impl<'a> Parser<'a> {
                     self.laxer.next();
                     Ok(r)
                 }
+                Err(e) => Err(e.clone()),
+            },
+            None => Err(Error::Parse(format!("failed to get a token but get:None"))),
+        }
+    }
+    fn peek(&mut self) -> Result<Token> {
+        match self.laxer.peek() {
+            Some(t) => match t {
+                Ok(token) => Ok(token.clone()),
                 Err(e) => Err(e.clone()),
             },
             None => Err(Error::Parse(format!("failed to get a token but get:None"))),
@@ -568,6 +668,250 @@ impl<'a> Parser<'a> {
     }
 }
 
+const LEFT_ASSOC: u8 = 1;
+const RIGHT_ASSOC: u8 = 1;
+
+trait Operation: Sized {
+    // 通过paser获得operation
+    fn get_operation(parser: &mut Parser, min: u8) -> Result<Option<Self>>;
+    // 获得优先级
+    fn get_prec(&self) -> u8;
+    // 获得左右结合性
+    fn get_assoc(&self) -> u8;
+}
+
+pub enum PrefixOperation {
+    // 负号
+    Negative,
+    // 正号
+    Plus,
+}
+
+impl PrefixOperation {
+    fn build_expresion(&self, expr: BaseExpression) -> BaseExpression {
+        match self {
+            PrefixOperation::Negative => {
+                BaseExpression::Operation(ast::Operation::Negative(Box::new(expr)))
+            }
+            PrefixOperation::Plus => {
+                BaseExpression::Operation(ast::Operation::Plus(Box::new(expr)))
+            }
+        }
+    }
+}
+
+impl Operation for PrefixOperation {
+    fn get_operation(parser: &mut Parser, min: u8) -> Result<Option<Self>> {
+        if min > 9 {
+            return Ok(None);
+        }
+        if parser.next_token_expect(Token::Plus).is_ok() {
+            Ok(Some(PrefixOperation::Plus))
+        } else if parser.next_token_expect(Token::Minus).is_ok() {
+            Ok(Some(PrefixOperation::Negative))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_prec(&self) -> u8 {
+        9
+    }
+
+    fn get_assoc(&self) -> u8 {
+        LEFT_ASSOC
+    }
+}
+
+enum InfixOperator {
+    // 逻辑
+    And,
+    Or,
+
+    // 比较
+    Equal,
+    GreaterThan,
+    GreaterThanOrEqual,
+    LessThan,
+    LessThanOrEqual,
+    NotEqual,
+
+    // 加减乘除
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    // 次方
+    Exponentiate,
+
+    Like,
+}
+
+impl InfixOperator {
+    /// 将操作和其他expression结合
+    fn build_expresion(&self, expr1: BaseExpression, expr2: BaseExpression) -> BaseExpression {
+        // ps 真的恶心 下次还是做个kv数据库吧
+        match self {
+            InfixOperator::And => {
+                BaseExpression::Operation(ast::Operation::And(Box::new(expr1), Box::new(expr2)))
+            }
+            InfixOperator::Or => {
+                BaseExpression::Operation(ast::Operation::Or(Box::new(expr1), Box::new(expr2)))
+            }
+            InfixOperator::Equal => {
+                BaseExpression::Operation(ast::Operation::Equal(Box::new(expr1), Box::new(expr2)))
+            }
+            InfixOperator::GreaterThan => BaseExpression::Operation(ast::Operation::GreaterThan(
+                Box::new(expr1),
+                Box::new(expr2),
+            )),
+            InfixOperator::GreaterThanOrEqual => BaseExpression::Operation(
+                ast::Operation::GreaterThanOrEqual(Box::new(expr1), Box::new(expr2)),
+            ),
+            InfixOperator::LessThan => BaseExpression::Operation(ast::Operation::LessThan(
+                Box::new(expr1),
+                Box::new(expr2),
+            )),
+            InfixOperator::LessThanOrEqual => BaseExpression::Operation(
+                ast::Operation::LessThanOrEqual(Box::new(expr1), Box::new(expr2)),
+            ),
+            InfixOperator::NotEqual => BaseExpression::Operation(ast::Operation::NotEqual(
+                Box::new(expr1),
+                Box::new(expr2),
+            )),
+            InfixOperator::Add => {
+                BaseExpression::Operation(ast::Operation::Add(Box::new(expr1), Box::new(expr2)))
+            }
+            InfixOperator::Subtract => BaseExpression::Operation(ast::Operation::Subtract(
+                Box::new(expr1),
+                Box::new(expr2),
+            )),
+            InfixOperator::Multiply => BaseExpression::Operation(ast::Operation::Multiply(
+                Box::new(expr1),
+                Box::new(expr2),
+            )),
+            InfixOperator::Divide => {
+                BaseExpression::Operation(ast::Operation::Divide(Box::new(expr1), Box::new(expr2)))
+            }
+            InfixOperator::Exponentiate => BaseExpression::Operation(ast::Operation::Exponentiate(
+                Box::new(expr1),
+                Box::new(expr2),
+            )),
+            InfixOperator::Like => {
+                BaseExpression::Operation(ast::Operation::Like(Box::new(expr1), Box::new(expr2)))
+            }
+        }
+    }
+}
+
+impl Operation for InfixOperator {
+    fn get_operation(parser: &mut Parser, min: u8) -> Result<Option<Self>> {
+        let r = match parser.peek()? {
+            Token::Keyword(Keyword::And) => Some(Self::And),
+            Token::Keyword(Keyword::Or) => Some(Self::Or),
+
+            Token::Keyword(Keyword::Like) => Some(Self::Like),
+
+            Token::GreaterThan => Some(Self::GreaterThan),
+            Token::GreaterThanOrEqual => Some(Self::GreaterThanOrEqual),
+            Token::LessThan => Some(Self::LessThan),
+            Token::LessOrGreaterThan => Some(Self::NotEqual),
+            Token::LessThanOrEqual => Some(Self::LessThanOrEqual),
+            Token::NotEqual => Some(Self::NotEqual),
+
+            Token::Plus => Some(Self::Add),
+            Token::Minus => Some(Self::Subtract),
+            Token::Asterisk => Some(Self::Multiply),
+            Token::Slash => Some(Self::Divide),
+            Token::Caret => Some(Self::Exponentiate),
+            Token::Equal => Some(Self::Equal),
+            _ => None,
+        };
+        match r {
+            Some(op) => {
+                if op.get_prec() > min {
+                    parser.next()?;
+                    Ok(Some(op))
+                } else {
+                    Ok(None)
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn get_prec(&self) -> u8 {
+        match self {
+            InfixOperator::And => 2,
+            InfixOperator::Or => 1,
+            InfixOperator::Equal | InfixOperator::NotEqual | InfixOperator::Like => 3,
+            InfixOperator::GreaterThan
+            | InfixOperator::GreaterThanOrEqual
+            | InfixOperator::LessThan
+            | InfixOperator::LessThanOrEqual => 4,
+            InfixOperator::Add | InfixOperator::Subtract => 5,
+            InfixOperator::Multiply | InfixOperator::Divide => 6,
+            InfixOperator::Exponentiate => 7,
+        }
+    }
+
+    fn get_assoc(&self) -> u8 {
+        match self {
+            InfixOperator::Exponentiate => RIGHT_ASSOC,
+            _ => LEFT_ASSOC,
+        }
+    }
+}
+
+// 后缀操作
+enum PostfixOperator {
+    IsNull,
+    IsNotNull,
+}
+
+impl PostfixOperator {
+    fn build_expresion(&self, expr: BaseExpression) -> BaseExpression {
+        match self {
+            PostfixOperator::IsNull => {
+                BaseExpression::Operation(ast::Operation::IsNull(Box::new(expr)))
+            }
+            PostfixOperator::IsNotNull => BaseExpression::Operation(ast::Operation::Not(Box::new(
+                BaseExpression::Operation(ast::Operation::IsNull(Box::new(expr))),
+            ))),
+        }
+    }
+}
+
+impl Operation for PostfixOperator {
+    fn get_operation(parser: &mut Parser, min: u8) -> Result<Option<Self>> {
+        if min > 9 {
+            return Ok(None);
+        }
+        if parser
+            .next_token_expect(Token::Keyword(Keyword::Is))
+            .is_ok()
+        {
+            let r = if parser.next_token_expect(Keyword::Not.into()).is_ok() {
+                PostfixOperator::IsNotNull
+            } else {
+                PostfixOperator::IsNull
+            };
+            parser.next_token_expect(Keyword::Null.into())?;
+            Ok(Some(r))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_prec(&self) -> u8 {
+        9
+    }
+
+    fn get_assoc(&self) -> u8 {
+        LEFT_ASSOC
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -578,5 +922,15 @@ mod tests {
         let statement = parser.parse();
         assert!(statement.is_ok());
         println!("statement {:?}", statement);
+    }
+    #[test]
+    fn select_test() {
+        let mut parser = Parser::new(
+            "SELECT customers.customer_id, customers.customer_name, COUNT(orders.order_id) AS num_of_orders, SUM(orders.order_total) AS total_spent FROM customers LEFT JOIN orders ON customers.customer_id = orders.customer_id WHERE orders.order_status = \"completed\" AND customers.customer_country = \"USA\" GROUP BY customers.customer_id HAVING num_of_orders > 5 ORDER BY total_spent DESC OFFSET 10 LIMIT 5;",
+        );
+        let statement = parser.parse();
+
+        println!("statement {:?}", statement);
+        assert!(statement.is_ok());
     }
 }

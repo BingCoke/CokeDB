@@ -86,9 +86,8 @@ pub enum ColumnType {
     Integer,
     Float,
     String,
-    Bool
+    Bool,
 }
-
 
 /// Sort orders
 #[derive(Clone, Debug, PartialEq)]
@@ -108,7 +107,32 @@ pub enum BaseExpression {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
+    // 负
+    Negative(Box<BaseExpression>),
+    // 正
+    Plus(Box<BaseExpression>),
 
+    And(Box<BaseExpression>, Box<BaseExpression>),
+    Or(Box<BaseExpression>, Box<BaseExpression>),
+
+    Like(Box<BaseExpression>, Box<BaseExpression>),
+
+    Equal(Box<BaseExpression>, Box<BaseExpression>),
+    NotEqual(Box<BaseExpression>, Box<BaseExpression>),
+    GreaterThan(Box<BaseExpression>, Box<BaseExpression>),
+    GreaterThanOrEqual(Box<BaseExpression>, Box<BaseExpression>),
+    LessThan(Box<BaseExpression>, Box<BaseExpression>),
+    LessThanOrEqual(Box<BaseExpression>, Box<BaseExpression>),
+
+    Add(Box<BaseExpression>, Box<BaseExpression>),
+    Subtract(Box<BaseExpression>, Box<BaseExpression>),
+    Multiply(Box<BaseExpression>, Box<BaseExpression>),
+    Divide(Box<BaseExpression>, Box<BaseExpression>),
+    Exponentiate(Box<BaseExpression>, Box<BaseExpression>),
+
+    Not(Box<BaseExpression>),
+
+    IsNull(Box<BaseExpression>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -117,10 +141,5 @@ pub enum Value {
     Integer(i64),
     Float(f64),
     String(String),
-    Bool(bool)
+    Bool(bool),
 }
-
-
-
-
-
