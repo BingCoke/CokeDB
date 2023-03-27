@@ -293,6 +293,9 @@ impl<'a> Parser<'a> {
                 offset = Some(expr);
                 // 再接下来是limit
                 limit = Some(self.parse_expression(0)?);
+            } else {
+                // 什么也没有了
+                limit = Some(expr);
             }
         } else if self.next_token_expect(Keyword::Offset.into()).is_ok() {
             // offset 在前
@@ -521,7 +524,6 @@ impl<'a> Parser<'a> {
             expr = operation.build_expresion(expr);
         };
 
-        // !!! 这里是while循环，吐了debug半天 看的源码才想起是while
         while let Some(operation) = InfixOperator::get_operation(self, min)? {
             expr = operation.build_expresion(
                 expr,
