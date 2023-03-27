@@ -516,8 +516,13 @@ impl<'a> Laxer<'a> {
     }
 
     fn term(&mut self) {
-        while self.next_char_expect(' ').is_some() {}
-        while self.next_char_expect('\n').is_some() {}
+        while self
+            .next_judge(|&&t| match t {
+                ' ' | '\n' | '\t' => true,
+                _ => false,
+            })
+            .is_some()
+        {}
     }
 }
 
@@ -553,5 +558,4 @@ mod tests {
         println!("r={}", r);
         assert_eq!(r, " Keyword(Select) Asterisk Keyword(From) Ident(\"nmber\") NotEqual Number(\"123.123\") Keyword(And) Ident(\"who\") Keyword(Is) Keyword(Null) Ident(\"babab\") Ident(\"thi\") Keyword(As)".to_string())
     }
-    
 }

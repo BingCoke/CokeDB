@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::f32::consts::E;
 use std::iter::Peekable;
 
 use crate::sql::parser::ast::{ColumnType, Value};
@@ -256,24 +255,54 @@ impl<'a> Parser<'a> {
         // 分为多种解析 解析select列，解析 from 解析 wheer 解析 groupby 解析 having 解析orderby
         // 解析 offset 解析 limit
         self.next_token_expect(Keyword::Select.into())?;
+
+        let select = self.parse_select_clause()?;
+        let from = self.parse_from_claues()?;
+        let filter = self.parse_where_claues()?;
+        let group_by = self.parse_grouby_clause()?;
+        let having = self.parse_having_claues()?;
+        let order = self.parse_order_claues()?;
+        let (offset, limit) = self.parse_limit_offset()?;
+
         Ok(Statement::Select {
-            select: self.parse_select_clause()?,
-            from: self.parse_from_claues()?,
-            filter: self.parse_where_claues()?,
-            group_by: self.parse_grouby_clause()?,
-            having: self.parse_having_claues()?,
-            order: self.parse_order_claues()?,
-            offset: if self.next_token_expect(Keyword::Offset.into()).is_ok() {
-                Some(self.parse_expression(0)?)
-            } else {
-                None
-            },
-            limit: if self.next_token_expect(Keyword::Limit.into()).is_ok() {
-                Some(self.parse_expression(0)?)
-            } else {
-                None
-            },
+            select,
+            from,
+            filter,
+            group_by,
+            having,
+            order,
+            offset,
+            limit,
         })
+    }
+
+    fn parse_limit_offset(&mut self) -> Result<(Option<BaseExpression>, Option<BaseExpression>)> {
+        // 有可能是 limit 在前 或者 offset 在前 或者就是直接 limit 1,2
+        let mut offset = None;
+        let mut limit = None;
+        // limit 在前
+        if self.next_token_expect(Keyword::Limit.into()).is_ok() {
+            let expr = self.parse_expression(0)?;
+            if self.next_token_expect(Keyword::Offset.into()).is_ok() {
+                // 下一个是offset 说明expr是limit
+                limit = Some(expr);
+                // 再下一个是offset
+                offset = Some(self.parse_expression(0)?);
+            } else if self.next_token_expect(Token::Comma).is_ok() {
+                // 下一个是逗号 说明expr是offset
+                offset = Some(expr);
+                // 再接下来是limit
+                limit = Some(self.parse_expression(0)?);
+            }
+        } else if self.next_token_expect(Keyword::Offset.into()).is_ok() {
+            // offset 在前
+            offset = Some(self.parse_expression(0)?);
+            // 接下来如果还有limit的话
+            if self.next_token_expect(Keyword::Limit.into()).is_ok() {
+                limit = Some(self.parse_expression(0)?);
+            }
+        }
+        Ok((offset, limit))
     }
 
     fn parse_select_clause(&mut self) -> Result<Vec<(BaseExpression, Option<String>)>> {
@@ -286,7 +315,7 @@ impl<'a> Parser<'a> {
         loop {
             let expression = self.parse_expression(0)?;
             let mut label = None;
-            if let Ok(Keyword::As) = self.next_keyword() {
+            if self.next_token_expect(Keyword::As.into()).is_ok() {
                 // 别名 如果有as 就必须有别名
                 label = Some(self.next_ident()?);
             } else if let Ok(label_) = self.next_ident() {
@@ -410,7 +439,7 @@ impl<'a> Parser<'a> {
 
     fn parse_where_claues(&mut self) -> Result<Option<BaseExpression>> {
         // 如果没有where就结束了 返回 Ok(None)
-        if self.next_token_expect(Keyword::Where.into()).is_ok() {
+        if self.next_token_expect(Keyword::Where.into()).is_err() {
             return Ok(None);
         }
         // 有的话就进行解析
@@ -420,17 +449,17 @@ impl<'a> Parser<'a> {
     fn parse_grouby_clause(&mut self) -> Result<Vec<BaseExpression>> {
         let mut expressions = Vec::new();
         // group by 没有就返回
-        if self.next_token_expect(Keyword::Group.into()).is_ok() {
+        if self.next_token_expect(Keyword::Group.into()).is_err() {
             return Ok(expressions);
         }
-        // 接下来必须要有into
+        // 接下来必须要有by
         self.next_token_expect(Keyword::By.into())?;
         // 解析group_by 字段 以逗号分割， 没有就结束了
         loop {
             //记得push进去 cloumn解析
             expressions.push(self.parse_expression(0)?);
-            // 碰到逗号退出
-            if self.next_token_expect(Token::Comma).is_ok() {
+            // 没有碰到逗号退出
+            if self.next_token_expect(Token::Comma).is_err() {
                 break;
             }
         }
@@ -482,7 +511,7 @@ impl<'a> Parser<'a> {
         let mut expr = if let Some(operation) = PrefixOperation::get_operation(self, min)? {
             // 看到前缀之后递归比如 -(1+3)
             operation.build_expresion(
-                self.parse_expression(operation.get_assoc() + operation.get_assoc())?,
+                self.parse_expression(operation.get_assoc() + operation.get_prec())?,
             )
         } else {
             self.get_atom_expression()?
@@ -525,6 +554,7 @@ impl<'a> Parser<'a> {
             Token::Keyword(Keyword::Infinity) => {
                 Ok(BaseExpression::Value(Value::Float(f64::INFINITY)))
             }
+
             Token::Keyword(Keyword::NaN) => Ok(BaseExpression::Value(Value::Float(f64::NAN))),
 
             // 碰到括号包围的
@@ -538,12 +568,21 @@ impl<'a> Parser<'a> {
                 // 看一下下一个是不是括号，如果是括号就是函数
                 if self.next_token_expect(Token::OpenParen).is_ok() {
                     let mut arg = Vec::new();
+
                     // 看到左括号截止
                     // while self.next_token_expect(Token::CloseParen).is_err() {
                     //     arg.push(self.parse_expression(0)?);
                     //     self.next_token_expect(Token::Comma)?;
                     // }
+
                     loop {
+                        // 看一下是不是count(*)
+                        if ident.to_uppercase() == "COUNT"
+                            && self.next_token_expect(Token::Asterisk).is_ok()
+                        {
+                            arg.push(BaseExpression::Value(Value::Bool(true)));
+                            break;
+                        }
                         arg.push(self.parse_expression(0)?);
                         if self.next_token_expect(Token::Comma).is_err() {
                             break;
@@ -669,7 +708,7 @@ impl<'a> Parser<'a> {
 }
 
 const LEFT_ASSOC: u8 = 1;
-const RIGHT_ASSOC: u8 = 1;
+const RIGHT_ASSOC: u8 = 0;
 
 trait Operation: Sized {
     // 通过paser获得operation
@@ -829,7 +868,7 @@ impl Operation for InfixOperator {
         };
         match r {
             Some(op) => {
-                if op.get_prec() > min {
+                if op.get_prec() >= min {
                     parser.next()?;
                     Ok(Some(op))
                 } else {
@@ -926,11 +965,114 @@ mod tests {
     #[test]
     fn select_test() {
         let mut parser = Parser::new(
-            "SELECT customers.customer_id, customers.customer_name, COUNT(orders.order_id) AS num_of_orders, SUM(orders.order_total) AS total_spent FROM customers LEFT JOIN orders ON customers.customer_id = orders.customer_id WHERE orders.order_status = \"completed\" AND customers.customer_country = \"USA\" GROUP BY customers.customer_id HAVING num_of_orders > 5 ORDER BY total_spent DESC OFFSET 10 LIMIT 5;",
+            "SELECT customers.customer_id, customers.customer_name, COUNT(orders.order_id) AS num_of_orders, SUM(orders.order_total) AS total_spent 
+            FROM customers LEFT JOIN orders ON customers.customer_id = orders.customer_id 
+            WHERE orders.order_status = \"completed\" AND customers.customer_country = \"USA\" 
+            GROUP BY customers.customer_id 
+            HAVING num_of_orders > 5 
+            order BY total_spent DESC OFFSET 10 LIMIT 5;",
         );
         let statement = parser.parse();
 
-        println!("statement {:?}", statement);
+        println!("statement {:#?}", statement);
         assert!(statement.is_ok());
+    }
+    #[test]
+    fn select1_test() {
+        let input = "SELECT -1 * (4.5 + 2) / 3.7 AS result ,-(4+3+2) + 5 
+        FROM table1
+        JOIN table2 ON table1.id = table2.id
+        WHERE table1.value > 10
+        GROUP BY table1.id
+        HAVING COUNT(*) > 3
+        ORDER BY table2.value DESC
+         OFFSET 5 LIMIT 10;";
+        let mut parser = Parser::new(input);
+        let statement = parser.parse();
+        println!("statement {:#?}", statement);
+    }
+    #[test]
+    fn select_offset_limit_test() {
+        let input = "SELECT *
+        FROM table1
+         OFFSET 5 LIMIT 10;";
+        let mut parser = Parser::new(input);
+        let statement = parser.parse();
+        println!("statement {:#?}", statement);
+        match statement {
+            Ok(n) => match n {
+                Statement::Select {
+                    select: _,
+                    from: _,
+                    filter: _,
+                    group_by: _,
+                    having: _,
+                    order: _,
+                    offset,
+                    limit,
+                } => {
+                    assert_eq!(offset, Some(BaseExpression::Value(Value::Integer(5))));
+                    assert_eq!(limit, Some(BaseExpression::Value(Value::Integer(10))));
+                }
+                _ => {
+                    panic!("expect select");
+                }
+            },
+            Err(_) => {}
+        };
+        let input = "SELECT *
+        FROM table1
+          LIMIT 10 OFFSET 5;";
+        let mut parser = Parser::new(input);
+        let statement = parser.parse();
+        println!("statement {:#?}", statement);
+        match statement {
+            Ok(n) => match n {
+                Statement::Select {
+                    select: _,
+                    from: _,
+                    filter: _,
+                    group_by: _,
+                    having: _,
+                    order: _,
+                    offset,
+                    limit,
+                } => {
+                    assert_eq!(offset, Some(BaseExpression::Value(Value::Integer(5))));
+                    assert_eq!(limit, Some(BaseExpression::Value(Value::Integer(10))));
+                }
+                _ => {
+                    panic!("expect select");
+                }
+            },
+            Err(_) => {}
+        };
+        let input = "SELECT *
+        FROM table1
+          LIMIT 5,10;";
+        let mut parser = Parser::new(input);
+        let statement = parser.parse();
+        println!("statement {:#?}", statement);
+        match statement {
+            Ok(n) => match n {
+                Statement::Select {
+                    select: _,
+                    from: _,
+                    filter: _,
+                    group_by: _,
+                    having: _,
+                    order: _,
+                    offset,
+                    limit,
+                } => {
+                    assert_eq!(offset, Some(BaseExpression::Value(Value::Integer(5))));
+                    assert_eq!(limit, Some(BaseExpression::Value(Value::Integer(10))));
+                }
+                _ => {
+                    panic!("expect select");
+                }
+            },
+            Err(_) => {}
+        };
     }
 }
