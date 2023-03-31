@@ -1,10 +1,8 @@
 use std::collections::BTreeMap;
 
-
-use crate::errors::{Result};
+use crate::errors::Result;
 
 use crate::sql::{ColumnType, OrderType, Value};
-
 /// Statements
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
@@ -87,6 +85,7 @@ pub struct Column {
 
 /// Expressions
 #[derive(Clone, Debug, PartialEq)]
+#[allow(unconditional_recursion)]
 pub enum BaseExpression {
     Field(Option<String>, String),
     Column(usize),
@@ -126,14 +125,13 @@ pub enum Operation {
 }
 
 impl BaseExpression {
-
-    /// 所有者进行转换 类比于二叉树，这里就是对二叉树某个节点进行转换 
+    /// 所有者进行转换 类比于二叉树，这里就是对二叉树某个节点进行转换
     /// before就是前序遍历转换 after就是后序遍历转换
     /// 这里的闭包需要传递多次 所以需要借用
     pub fn transform<A, B>(mut self, before: &mut A, after: &mut B) -> Result<Self>
     where
-        A:  FnMut(Self) -> Result<Self>,
-        B:  FnMut(Self) -> Result<Self>,
+        A: FnMut(Self) -> Result<Self>,
+        B: FnMut(Self) -> Result<Self>,
     {
         self = before(self)?;
         match &mut self {
@@ -167,7 +165,7 @@ impl BaseExpression {
     }
 
     /// 借用 进行转换
-    pub fn transform_ref<A, B>(&mut self, before:  &mut A, after: &mut B) -> Result<()>
+    pub fn transform_ref<A, B>(&mut self, before: &mut A, after: &mut B) -> Result<()>
     where
         A: FnMut(Self) -> Result<Self>,
         B: FnMut(Self) -> Result<Self>,
@@ -179,9 +177,45 @@ impl BaseExpression {
         Ok(())
     }
 
-
+    pub fn contains<F>(&self, predicate: &F) -> bool
+    where
+        F: Fn(&BaseExpression) -> bool,
+    {
+        use Operation::*;
+        predicate(self)
+            || match self {
+                Self::Operation(Add(lhs, rhs))
+                | Self::Operation(And(lhs, rhs))
+                | Self::Operation(Divide(lhs, rhs))
+                | Self::Operation(Equal(lhs, rhs))
+                | Self::Operation(Exponentiate(lhs, rhs))
+                | Self::Operation(GreaterThan(lhs, rhs))
+                | Self::Operation(GreaterThanOrEqual(lhs, rhs))
+                | Self::Operation(LessThan(lhs, rhs))
+                | Self::Operation(LessThanOrEqual(lhs, rhs))
+                | Self::Operation(Like(lhs, rhs))
+                | Self::Operation(Multiply(lhs, rhs))
+                | Self::Operation(NotEqual(lhs, rhs))
+                | Self::Operation(Or(lhs, rhs))
+                | Self::Operation(Subtract(lhs, rhs)) => {
+                    lhs.contains(predicate) || rhs.contains(predicate)
+                },
+                Self::Function(_, expr)
+                | Self::Operation(Plus(expr))
+                | Self::Operation(Negative(expr))
+                | Self::Operation(IsNull(expr))
+                | Self::Operation(Not(expr)) => expr.contains(predicate),
+                // 如果上面的predicate失败 这里也就是false
+                Self::Value(_) | Self::Field(_, _) | Self::Column(_) => false,
+            }
+    }
 
     pub fn contains_aggreate(&self) -> bool {
-        todo!()
+        self.contains(&|e|{
+            match e {
+                BaseExpression::Function(_,_ ) => true,
+                _ => false,
+            }
+        })
     }
 }

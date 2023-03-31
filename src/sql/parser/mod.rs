@@ -31,7 +31,8 @@ impl<'a> Parser<'a> {
     pub fn get_statement(&mut self) -> Result<Statement> {
         match self.laxer.peek() {
             Some(token) => match token {
-                Ok(Token::Keyword(Keyword::Begin)) |Ok(Token::Keyword(Keyword::Commit))
+                Ok(Token::Keyword(Keyword::Begin))
+                | Ok(Token::Keyword(Keyword::Commit))
                 | Ok(Token::Keyword(Keyword::Rollback)) => self.parse_transaction(),
                 Ok(Token::Keyword(Keyword::Create)) => self.parse_create_statement(),
                 Ok(Token::Keyword(Keyword::Drop)) => self.parse_drop_statement(),
@@ -46,7 +47,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-     /// Parses a transaction statement
+    /// Parses a transaction statement
     fn parse_transaction(&mut self) -> Result<ast::Statement> {
         match self.next()? {
             Token::Keyword(Keyword::Begin) => {
@@ -63,12 +64,7 @@ impl<'a> Parser<'a> {
                 if self.next_token_expect(Keyword::As.into()).is_ok() {
                     match self.next()? {
                         Token::Number(n) => version = Some(n.parse::<u64>()?),
-                        token => {
-                            return Err(Error::Parse(format!(
-                                "unexpected token {}",
-                                token
-                            )))
-                        }
+                        token => return Err(Error::Parse(format!("unexpected token {}", token))),
                     }
                 }
                 Ok(ast::Statement::Begin { readonly, version })
@@ -1009,7 +1005,7 @@ mod tests {
         );
         let statement = parser.parse();
 
-        println!("statement {:#?}", statement);
+        //println!("statement {:#?}", statement);
         assert!(statement.is_ok());
     }
     #[test]
@@ -1023,8 +1019,35 @@ mod tests {
         ORDER BY table2.value DESC
          OFFSET 5 LIMIT 10;";
         let mut parser = Parser::new(input);
-        let statement = parser.parse();
-        println!("statement {:#?}", statement);
+        let statement = parser.parse().unwrap();
+        match &statement {
+            Statement::Select {
+                select,
+                from,
+                filter,
+                group_by,
+                having,
+                order,
+                offset,
+                limit,
+            } => {
+                let expr = &select[0].0;
+                if expr.contains(&|e| match e {
+                    BaseExpression::Operation(ast::Operation::Negative(_)) => true,
+                    _ => false,
+                }) {
+                    println!("contain negative");
+                };
+                if expr.contains(&|e| match e {
+                    BaseExpression::Operation(ast::Operation::Multiply(_,_)) => true,
+                    _ => false,
+                }) {
+                    println!("contain multiple");
+                };
+            }
+            _ => {}
+        };
+        //println!("statement {:#?}", statement);
     }
     #[test]
     fn select_offset_limit_test() {
