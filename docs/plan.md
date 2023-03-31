@@ -48,4 +48,5 @@ raft engine 和 kv engine 的事务支持 都相当于proxy, 只有kv engine在�
 
 记录每个过程
 - [parse](parse.md)
+- [planner](planner.md)
 

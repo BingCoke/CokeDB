@@ -118,4 +118,8 @@ select * from where join  group_by order having
 - table_name  表明 String
 - 列 Vec<Column>
 
-# 
+# 总结 03-28
+其实总体并不是很难，就是需要的考虑的case比较多。自己稍微搞了几个复杂的sql测了一下，基本符合预期，但是肯定还有bug,感觉普遍情况应该是没有问题了，后续再增加测试sql.
+还有rust写法，感觉自己有些写的很丑陋但是懒得改了 重新再去看toydb作者的编码功底，真的值得学习。
+
+

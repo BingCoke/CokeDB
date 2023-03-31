@@ -1,8 +1,12 @@
 use std::collections::BTreeMap;
 
+
+use crate::errors::{Result};
+
+use crate::sql::{ColumnType, OrderType, Value};
+
 /// Statements
 #[derive(Clone, Debug, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum Statement {
     Begin {
         readonly: bool,
@@ -35,7 +39,7 @@ pub enum Statement {
 
     Select {
         select: Vec<(BaseExpression, Option<String>)>,
-        from: Vec<FromItem>,
+        from: Option<FromItem>,
         filter: Option<BaseExpression>,
         group_by: Vec<BaseExpression>,
         having: Option<BaseExpression>,
@@ -81,27 +85,13 @@ pub struct Column {
     pub index: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum ColumnType {
-    Integer,
-    Float,
-    String,
-    Bool,
-}
-
-/// Sort orders
-#[derive(Clone, Debug, PartialEq)]
-pub enum OrderType {
-    ASC,
-    DES,
-}
-
 /// Expressions
 #[derive(Clone, Debug, PartialEq)]
 pub enum BaseExpression {
     Field(Option<String>, String),
+    Column(usize),
     Value(Value),
-    Function(String, Vec<BaseExpression>),
+    Function(String, Box<BaseExpression>),
     Operation(Operation),
 }
 
@@ -135,11 +125,63 @@ pub enum Operation {
     IsNull(Box<BaseExpression>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Value {
-    None,
-    Integer(i64),
-    Float(f64),
-    String(String),
-    Bool(bool),
+impl BaseExpression {
+
+    /// 所有者进行转换 类比于二叉树，这里就是对二叉树某个节点进行转换 
+    /// before就是前序遍历转换 after就是后序遍历转换
+    /// 这里的闭包需要传递多次 所以需要借用
+    pub fn transform<A, B>(mut self, before: &mut A, after: &mut B) -> Result<Self>
+    where
+        A:  FnMut(Self) -> Result<Self>,
+        B:  FnMut(Self) -> Result<Self>,
+    {
+        self = before(self)?;
+        match &mut self {
+            BaseExpression::Operation(Operation::Add(lhs, rhs))
+            | Self::Operation(Operation::And(lhs, rhs))
+            | Self::Operation(Operation::Divide(lhs, rhs))
+            | Self::Operation(Operation::Equal(lhs, rhs))
+            | Self::Operation(Operation::Exponentiate(lhs, rhs))
+            | Self::Operation(Operation::GreaterThan(lhs, rhs))
+            | Self::Operation(Operation::GreaterThanOrEqual(lhs, rhs))
+            | Self::Operation(Operation::LessThan(lhs, rhs))
+            | Self::Operation(Operation::LessThanOrEqual(lhs, rhs))
+            | Self::Operation(Operation::Like(lhs, rhs))
+            | Self::Operation(Operation::Multiply(lhs, rhs))
+            | Self::Operation(Operation::Or(lhs, rhs))
+            | Self::Operation(Operation::NotEqual(lhs, rhs))
+            | Self::Operation(Operation::Subtract(lhs, rhs)) => {
+                lhs.transform_ref(before, after)?;
+                rhs.transform_ref(before, after)?;
+            }
+            Self::Operation(Operation::Plus(expr))
+            | Self::Operation(Operation::Negative(expr))
+            | Self::Operation(Operation::IsNull(expr))
+            | Self::Function(_, expr)
+            | Self::Operation(Operation::Not(expr)) => {
+                expr.transform_ref(before, after)?;
+            }
+            Self::Value(_) | Self::Field(_, _) | Self::Column(_) => {}
+        };
+        after(self)
+    }
+
+    /// 借用 进行转换
+    pub fn transform_ref<A, B>(&mut self, before:  &mut A, after: &mut B) -> Result<()>
+    where
+        A: FnMut(Self) -> Result<Self>,
+        B: FnMut(Self) -> Result<Self>,
+    {
+        // 直接内存转换
+        let tmp = std::mem::replace(self, BaseExpression::Value(Value::Null));
+        // 这样就拿到所有权了
+        *self = tmp.transform(before, after)?;
+        Ok(())
+    }
+
+
+
+    pub fn contains_aggreate(&self) -> bool {
+        todo!()
+    }
 }

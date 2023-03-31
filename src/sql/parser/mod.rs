@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 use std::iter::Peekable;
 
-use crate::sql::parser::ast::{ColumnType, Value};
 use crate::sql::parser::laxer::{Keyword, Token};
 
-use self::ast::{BaseExpression, Column, FromItem, JoinType, OrderType};
+use self::ast::{BaseExpression, Column, FromItem, JoinType};
 use self::{ast::Statement, laxer::Laxer};
 use crate::errors::Error;
 use crate::errors::Result;
+
+use super::{ColumnType, OrderType, Value};
 
 pub mod ast;
 pub mod laxer;
@@ -30,6 +31,8 @@ impl<'a> Parser<'a> {
     pub fn get_statement(&mut self) -> Result<Statement> {
         match self.laxer.peek() {
             Some(token) => match token {
+                Ok(Token::Keyword(Keyword::Begin)) |Ok(Token::Keyword(Keyword::Commit))
+                | Ok(Token::Keyword(Keyword::Rollback)) => self.parse_transaction(),
                 Ok(Token::Keyword(Keyword::Create)) => self.parse_create_statement(),
                 Ok(Token::Keyword(Keyword::Drop)) => self.parse_drop_statement(),
                 Ok(Token::Keyword(Keyword::Select)) => self.parse_select_statement(),
@@ -40,6 +43,39 @@ impl<'a> Parser<'a> {
                 Err(e) => Err(e.clone()),
             },
             None => Err(Error::Parse("not fount token".to_string())),
+        }
+    }
+
+     /// Parses a transaction statement
+    fn parse_transaction(&mut self) -> Result<ast::Statement> {
+        match self.next()? {
+            Token::Keyword(Keyword::Begin) => {
+                let mut readonly = false;
+                let mut version = None;
+                self.next_token_expect(Keyword::Transaction.into())?;
+                if self.next_token_expect(Keyword::Read.into()).is_ok() {
+                    match self.next()? {
+                        Token::Keyword(Keyword::Only) => readonly = true,
+                        Token::Keyword(Keyword::Write) => readonly = false,
+                        token => return Err(Error::Parse(format!("unexpected token {}", token))),
+                    }
+                }
+                if self.next_token_expect(Keyword::As.into()).is_ok() {
+                    match self.next()? {
+                        Token::Number(n) => version = Some(n.parse::<u64>()?),
+                        token => {
+                            return Err(Error::Parse(format!(
+                                "unexpected token {}",
+                                token
+                            )))
+                        }
+                    }
+                }
+                Ok(ast::Statement::Begin { readonly, version })
+            }
+            Token::Keyword(Keyword::Commit) => Ok(ast::Statement::Commit),
+            Token::Keyword(Keyword::Rollback) => Ok(ast::Statement::Rollback),
+            token => Err(Error::Parse(format!("Unexpected token {}", token))),
         }
     }
 
@@ -333,25 +369,32 @@ impl<'a> Parser<'a> {
         Ok(select)
     }
 
-    fn parse_from_claues(&mut self) -> Result<Vec<FromItem>> {
-        let mut from = Vec::new();
+    fn parse_from_claues(&mut self) -> Result<Option<FromItem>> {
         // 没有from关键字就返回就好了
         if self
             .next_token_expect(Token::Keyword(Keyword::From))
             .is_err()
         {
-            return Ok(from);
+            return Ok(None);
         }
         // 首先拿到第一个fromItem
+        let mut base_table = self.parse_join_from(None)?;
         loop {
-            let table = self.parse_join_from(None)?;
-            from.push(table);
             if self.next_token_expect(Token::Comma).is_err() {
                 break;
             }
+            let table = self.parse_join_from(None)?;
+
+            // 逗号连接的多个表连接其实就是一个内连接
+            base_table = ast::FromItem::Join {
+                left: Box::new(base_table),
+                right: Box::new(table),
+                join_type: JoinType::Inner,
+                predicate: None,
+            };
         }
 
-        Ok(from)
+        Ok(Some(base_table))
     }
 
     fn parse_join_from(&mut self, left: Option<FromItem>) -> Result<FromItem> {
@@ -549,7 +592,7 @@ impl<'a> Parser<'a> {
                 }
             }
             Token::String(string) => Ok(BaseExpression::Value(Value::String(string))),
-            Token::Keyword(Keyword::Null) => Ok(BaseExpression::Value(Value::None)),
+            Token::Keyword(Keyword::Null) => Ok(BaseExpression::Value(Value::Null)),
             Token::Keyword(Keyword::True) => Ok(BaseExpression::Value(Value::Bool(true))),
             Token::Keyword(Keyword::False) => Ok(BaseExpression::Value(Value::Bool(false))),
             // 补上
@@ -569,29 +612,17 @@ impl<'a> Parser<'a> {
             Token::Ident(ident) => {
                 // 看一下下一个是不是括号，如果是括号就是函数
                 if self.next_token_expect(Token::OpenParen).is_ok() {
-                    let mut arg = Vec::new();
-
-                    // 看到左括号截止
-                    // while self.next_token_expect(Token::CloseParen).is_err() {
-                    //     arg.push(self.parse_expression(0)?);
-                    //     self.next_token_expect(Token::Comma)?;
-                    // }
-
-                    loop {
-                        // 看一下是不是count(*)
-                        if ident.to_uppercase() == "COUNT"
-                            && self.next_token_expect(Token::Asterisk).is_ok()
-                        {
-                            arg.push(BaseExpression::Value(Value::Bool(true)));
-                            break;
-                        }
-                        arg.push(self.parse_expression(0)?);
-                        if self.next_token_expect(Token::Comma).is_err() {
-                            break;
-                        }
-                    }
+                    // 计划中函数只需要单属性就好了
+                    // 可能是count *
+                    let arg = if ident.to_uppercase() == "COUNT"
+                        && self.next_token_expect(Token::Asterisk).is_ok()
+                    {
+                        BaseExpression::Value(Value::Bool(true))
+                    } else {
+                        self.parse_expression(0)?
+                    };
                     self.next_token_expect(Token::CloseParen)?;
-                    Ok(BaseExpression::Function(ident, arg))
+                    Ok(BaseExpression::Function(ident, Box::new(arg)))
                 } else {
                     // 不是函数就是字段
                     let mut table = None;
@@ -955,6 +986,8 @@ impl Operation for PostfixOperator {
 
 #[cfg(test)]
 mod tests {
+    use crate::sql::Value;
+
     use super::*;
 
     #[test]
