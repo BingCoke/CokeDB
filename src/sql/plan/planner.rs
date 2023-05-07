@@ -538,6 +538,7 @@ impl Planner {
                     right,
                     predicate,
                     outer,
+                    left_size,
                 };
                 let size = scope.get_column_size();
 

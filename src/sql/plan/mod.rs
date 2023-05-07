@@ -1,5 +1,7 @@
+pub mod optimizer;
 pub mod planner;
 
+use core::fmt;
 use std::fmt::Display;
 
 use super::{expression::Expression, OrderType, Table, Value};
@@ -81,6 +83,7 @@ pub enum Node {
     NestedLoopJoin {
         left: Box<Node>,
         right: Box<Node>,
+        left_size: usize,
         predicate: Option<Expression>,
         outer: bool,
     },
@@ -132,6 +135,172 @@ pub enum Node {
     Nothing,
 }
 impl Node {
+
+
+
+    /// 将node转化为另一个node
+    pub fn transform<B, A>(mut self, before: &B, after: &A) -> Result<Self>
+    where
+        B: Fn(Self) -> Result<Self>,
+        A: Fn(Self) -> Result<Self>,
+    {
+        self = before(self)?;
+        self = match self {
+            Self::Update { table, source, set } => Self::Update {
+                table,
+                source: source.transform(before, after)?.into(),
+                set,
+            },
+            Self::Delete { table, source } => Self::Delete {
+                table,
+                source: source.transform(before, after)?.into(),
+            },
+
+            Self::NestedLoopJoin {
+                left,
+                right,
+                left_size,
+                predicate,
+                outer,
+            } => Self::NestedLoopJoin {
+                left: left.transform(before, after)?.into(),
+                right: right.transform(before, after)?.into(),
+                predicate,
+                outer,
+                left_size,
+            },
+            Self::Filter { source, predicate } => Self::Filter {
+                source: source.transform(before, after)?.into(),
+                predicate,
+            },
+            Self::Aggregation { source, aggregates } => Self::Aggregation {
+                source: source.transform(before, after)?.into(),
+                aggregates,
+            },
+            Self::HashJoin {
+                left,
+                left_field,
+                right,
+                right_field,
+                outer,
+            } => Self::HashJoin {
+                left: left.transform(before, after)?.into(),
+                left_field,
+                right: right.transform(before, after)?.into(),
+                right_field,
+                outer,
+            },
+            Self::Limit { source, limit } => Self::Limit {
+                source: source.transform(before, after)?.into(),
+                limit,
+            },
+            Self::Offset { source, offset } => Self::Offset {
+                source: source.transform(before, after)?.into(),
+                offset,
+            },
+            Self::Order { source, orders } => Self::Order {
+                source: source.transform(before, after)?.into(),
+                orders,
+            },
+            Self::Projection {
+                source,
+                expressions,
+            } => Self::Projection {
+                source: source.transform(before, after)?.into(),
+                expressions,
+            },
+
+            // 最低层的操作就不转换了
+            n @ Self::CreateTable { .. }
+            | n @ Self::DropTable { .. }
+            | n @ Self::IndexLookup { .. }
+            | n @ Self::Insert { .. }
+            | n @ Self::KeyLookup { .. }
+            | n @ Self::Nothing
+            | n @ Self::Scan { .. } => n,
+        };
+        after(self)
+    }
+
+
+
+     /// 转换node中的expression
+    pub fn transform_expressions<B, A>(self, before: &B, after: &A) -> Result<Self>
+    where
+        B: Fn(Expression) -> Result<Expression>,
+        A: Fn(Expression) -> Result<Expression>,
+    {
+        Ok(match self {
+            n @ Self::Aggregation { .. }
+            | n @ Self::CreateTable { .. }
+            | n @ Self::Delete { .. }
+            | n @ Self::DropTable { .. }
+            | n @ Self::HashJoin { .. }
+            | n @ Self::IndexLookup { .. }
+            | n @ Self::KeyLookup { .. }
+            | n @ Self::Limit { .. }
+            | n @ Self::NestedLoopJoin { predicate: None, .. }
+            | n @ Self::Nothing
+            | n @ Self::Offset { .. }
+            | n @ Self::Scan { filter: None, .. } => n,
+
+            Self::Filter { source, predicate } => {
+                Self::Filter { source, predicate: predicate.transform(before, after)? }
+            }
+
+            Self::Insert { table, columns, expressions } => Self::Insert {
+                table,
+                columns,
+                expressions: expressions
+                    .into_iter()
+                    .map(|exprs| exprs.into_iter().map(|e| e.transform(before, after)).collect())
+                    .collect::<Result<_>>()?,
+            },
+
+            Self::Order { source, orders } => Self::Order {
+                source,
+                orders: orders
+                    .into_iter()
+                    .map(|(e, o)| e.transform(before, after).map(|e| (e, o)))
+                    .collect::<Result<_>>()?,
+            },
+
+            Self::NestedLoopJoin { left,  right, predicate: Some(predicate), outer, left_size } => {
+                Self::NestedLoopJoin {
+                    left,
+                    right,
+                    predicate: Some(predicate.transform(before, after)?),
+                    outer,
+                    left_size,
+                }
+            }
+
+            Self::Projection { source, expressions } => Self::Projection {
+                source,
+                expressions: expressions
+                    .into_iter()
+                    .map(|(e, l)| Ok((e.transform(before, after)?, l)))
+                    .collect::<Result<_>>()?,
+            },
+
+            Self::Scan { table, alias, filter: Some(filter) } => {
+                Self::Scan { table, alias, filter: Some(filter.transform(before, after)?) }
+            }
+
+            Self::Update { table, source, set } => Self::Update {
+                table,
+                source,
+                set: set
+                    .into_iter()
+                    .map(|(i, e)| e.transform(before, after).map(|e| (i, e)))
+                    .collect::<Result<_>>()?,
+            },
+        })
+    }
+
+
+
+
     // Displays the node, where prefix gives the node prefix.
     pub fn format(&self, mut indent: String, root: bool, last: bool) -> String {
         let mut s = indent.clone();
@@ -251,6 +420,7 @@ impl Node {
                 right,
                 predicate,
                 outer,
+                left_size: _,
             } => {
                 s += &format!("NestedLoopJoin: {}", if *outer { "outer" } else { "inner" });
                 if let Some(expr) = predicate {
@@ -329,6 +499,13 @@ impl Node {
         s
     }
 }
+impl Display for Node {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.format("".into(), true, true))
+    }
+}
+
+
 
 pub struct Plan {
     node: Node,

@@ -177,6 +177,7 @@ impl BaseExpression {
         Ok(())
     }
 
+    /// 递归查找是否有一个节点满足条件
     pub fn contains<F>(&self, predicate: &F) -> bool
     where
         F: Fn(&BaseExpression) -> bool,

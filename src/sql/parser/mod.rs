@@ -753,6 +753,8 @@ pub enum PrefixOperation {
     Negative,
     // 正号
     Plus,
+    // 非
+    Not
 }
 
 impl PrefixOperation {
@@ -763,6 +765,9 @@ impl PrefixOperation {
             }
             PrefixOperation::Plus => {
                 BaseExpression::Operation(ast::Operation::Plus(Box::new(expr)))
+            },
+            PrefixOperation::Not => {
+                BaseExpression::Operation(ast::Operation::Not(Box::new(expr)))
             }
         }
     }
@@ -777,6 +782,10 @@ impl Operation for PrefixOperation {
             Ok(Some(PrefixOperation::Plus))
         } else if parser.next_token_expect(Token::Minus).is_ok() {
             Ok(Some(PrefixOperation::Negative))
+        } else if parser.next_token_expect(Keyword::Not.into()).is_ok()  {
+            Ok(Some(PrefixOperation::Not))
+        } else if parser.next_token_expect(Token::Exclamation).is_ok()  {
+            Ok(Some(PrefixOperation::Not))
         } else {
             Ok(None)
         }
@@ -818,7 +827,6 @@ enum InfixOperator {
 impl InfixOperator {
     /// 将操作和其他expression结合
     fn build_expresion(&self, expr1: BaseExpression, expr2: BaseExpression) -> BaseExpression {
-        // ps 真的恶心 下次还是做个kv数据库吧
         match self {
             InfixOperator::And => {
                 BaseExpression::Operation(ast::Operation::And(Box::new(expr1), Box::new(expr2)))
