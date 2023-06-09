@@ -1,13 +1,26 @@
-pub mod source;
-pub mod schema;
+pub mod aggregation;
+pub mod join;
 pub mod mutation;
+pub mod query;
+pub mod schema;
+pub mod source;
+
+use serde_derive::{Deserialize, Serialize};
 
 use crate::storage::kv::mvcc::Mode;
 
-use super::{engine::Transaction, Value, plan::Node};
+use self::{
+    aggregation::Aggregation,
+    join::{HashJoin, NestedLoopJoin},
+    mutation::{Delete, Insert, Update},
+    query::{Filter, Limit, Offset, Order, Projection},
+    schema::{CreateTable, DeleteTable},
+    source::{Nothing, Scan, IndexLookUp, KeyLookUp},
+};
+
+use super::{engine::Transaction, plan::Node, Value};
 
 use crate::errors::*;
-
 
 /// 执行器
 pub trait Executor<T: Transaction> {
@@ -15,10 +28,81 @@ pub trait Executor<T: Transaction> {
     fn execute(self: Box<Self>, txn: &mut T) -> Result<ResultSet>;
 }
 
+impl<T: Transaction + 'static> dyn Executor<T> {
+    /// 构建一个执行器
+    pub fn build(node: Node) -> Box<dyn Executor<T>> {
+        match node {
+            Node::Aggregation { source, aggregates } => {
+                Aggregation::new(Self::build(*source), aggregates)
+            }
+            Node::CreateTable { table, defaults } => CreateTable::new(table),
+            Node::Delete { table, source } => Delete::new(table, Self::build(*source)),
+            Node::DropTable { table } => DeleteTable::new(table),
+            Node::Filter { source, predicate } => Filter::new(Self::build(*source), predicate),
+            Node::HashJoin {
+                left,
+                left_field,
+                right,
+                right_field,
+                outer,
+            } => HashJoin::new(
+                Self::build(*left),
+                left_field.0,
+                Self::build(*right),
+                right_field.0,
+                outer,
+            ),
+            Node::IndexLookup {
+                table,
+                alias: _,
+                column,
+                values,
+            } => IndexLookUp::new(table, column, values),
+            Node::Insert {
+                table,
+                columns,
+                expressions,
+            } => Insert::new(table, columns, expressions),
+            Node::KeyLookup {
+                table,
+                alias: _,
+                keys,
+            } => KeyLookUp::new(table, keys),
+            Node::Limit { source, limit } => Limit::new(Self::build(*source), limit),
+            Node::NestedLoopJoin {
+                left,
+                left_size: _,
+                right,
+                predicate,
+                outer,
+            } => NestedLoopJoin::new(Self::build(*left), Self::build(*right), predicate, outer),
+            Node::Nothing => Nothing::new(),
+            Node::Offset { source, offset } => Offset::new(Self::build(*source), offset),
+            Node::Order { source, orders } => Order::new(Self::build(*source), orders),
+            Node::Projection {
+                source,
+                expressions,
+            } => Projection::new(Self::build(*source), expressions),
+            Node::Scan {
+                table,
+                filter,
+                alias: _,
+            } => Scan::new(table, filter),
+            Node::Update {
+                table,
+                source,
+                set,
+            } => Update::new(
+                table,
+                Self::build(*source),
+                set,
+            ),
+        }
+    }
+}
 
 /// 执行器的结果
-//#[derive(Derivative, Serialize, Deserialize)]
-//#[derivative(Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub enum ResultSet {
     // 事务开始
     Begin {
@@ -56,19 +140,15 @@ pub enum ResultSet {
     // 查询结果
     Query {
         columns: Vec<Option<String>>,
-        /* #[derivative(Debug = "ignore")]
-        #[derivative(PartialEq = "ignore")]
-        #[serde(skip, default = "ResultSet::empty_rows")] */
         rows: Rows,
     },
     // explain 结果
     Explain(Node),
 }
 
-
 pub type Row = Vec<Value>;
 pub type Rows = Vec<Row>;
-#[derive(Clone, Debug, PartialEq,)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Column {
     pub name: Option<String>,
 }

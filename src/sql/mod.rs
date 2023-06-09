@@ -7,7 +7,6 @@ use std::{
 };
 
 use crate::errors::{Error, Result};
-use bincode::de;
 use core::hash::Hash;
 use serde_derive::{Deserialize, Serialize};
 
@@ -16,7 +15,7 @@ use self::engine::Transaction;
 pub mod engine;
 pub mod execution;
 pub mod expression;
-mod parser;
+pub mod parser;
 mod plan;
 pub mod schema;
 
@@ -27,6 +26,16 @@ pub enum Value {
     Float(f64),
     String(String),
     Bool(bool),
+}
+
+impl Value {
+    fn is_visiable(&self) -> Result<bool> {
+        match self {
+            Value::Null => Ok(false),
+            Value::Bool(b) => Ok(*b),
+            r => Err(Error::Evaluate(format!("expected boolean get {}", r))),
+        }
+    }
 }
 
 impl Value {
@@ -294,10 +303,15 @@ impl Table {
             if let Some(default) = &ele.default {
                 if let Some(datatype) = default.datatype() {
                     if datatype != ele.column_type {
-                        return Err(Error::Table(format!("datatype of default value is {}, but datatype of column is {}",datatype,ele.column_type)))
+                        return Err(Error::Table(format!(
+                            "datatype of default value is {}, but datatype of column is {}",
+                            datatype, ele.column_type
+                        )));
                     }
                 } else if !ele.nullable {
-                    return Err(Error::Table(format!("cannot use null default value with not nullable column")));
+                    return Err(Error::Table(format!(
+                        "cannot use null default value with not nullable column"
+                    )));
                 }
             } else if ele.nullable {
                 // 如果没有默认值 并且is not null
@@ -309,10 +323,20 @@ impl Table {
         }
         Ok(())
     }
+
+    fn get_key_index(&self) -> Result<usize> {
+        self.columns
+            .iter()
+            .position(|c| c.primary_key)
+            .ok_or(Error::Table(format!(
+                "error get table key index {}",
+                self.name
+            )))
+    }
 }
 
 /// 排序类型
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum OrderType {
     ASC,
     DES,

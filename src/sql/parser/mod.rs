@@ -3,7 +3,7 @@ use std::iter::Peekable;
 
 use crate::sql::parser::laxer::{Keyword, Token};
 
-use self::ast::{BaseExpression, Column, FromItem, JoinType};
+use self::ast::{BaseExpression, FromItem, JoinType, SqlClumn};
 use self::{ast::Statement, laxer::Laxer};
 use crate::errors::Error;
 use crate::errors::Result;
@@ -91,7 +91,7 @@ impl<'a> Parser<'a> {
         self.next_token_expect(Token::Keyword(Keyword::Table))?;
         let name = self.next_ident()?;
         self.next_token_expect(Token::OpenParen)?;
-        let mut columns: Vec<Column> = vec![];
+        let mut columns: Vec<SqlClumn> = vec![];
         loop {
             columns.push(self.parse_column()?);
             // 下一个不是逗号的时候表示结束
@@ -112,7 +112,7 @@ impl<'a> Parser<'a> {
      * name type other(比如是否是主键，是否是索引，是否唯一，是否可以是null, 是有default,)
      *
      */
-    fn parse_column(&mut self) -> Result<Column> {
+    fn parse_column(&mut self) -> Result<SqlClumn> {
         // get cloumn name
         let name = self.next_ident()?;
         // get column_type
@@ -129,7 +129,7 @@ impl<'a> Parser<'a> {
             Keyword::Varchar => ColumnType::String,
             other => return Err(Error::Parse(format!("Unexpected keyword {}", other))),
         };
-        let mut column = Column {
+        let mut column = SqlClumn {
             name,
             column_type,
             primary_key: false,
@@ -249,7 +249,9 @@ impl<'a> Parser<'a> {
             while let Ok(name) = self.next_ident() {
                 columnss.push(name);
                 // 逗号分割
-                self.next_token_expect(Token::Comma)?;
+                if self.next_token_expect(Token::Comma).is_err() {
+                    break;
+                };
             }
             self.next_token_expect(Token::CloseParen)?;
             columns = Some(columnss);
@@ -754,7 +756,7 @@ pub enum PrefixOperation {
     // 正号
     Plus,
     // 非
-    Not
+    Not,
 }
 
 impl PrefixOperation {
@@ -765,10 +767,8 @@ impl PrefixOperation {
             }
             PrefixOperation::Plus => {
                 BaseExpression::Operation(ast::Operation::Plus(Box::new(expr)))
-            },
-            PrefixOperation::Not => {
-                BaseExpression::Operation(ast::Operation::Not(Box::new(expr)))
             }
+            PrefixOperation::Not => BaseExpression::Operation(ast::Operation::Not(Box::new(expr))),
         }
     }
 }
@@ -782,9 +782,9 @@ impl Operation for PrefixOperation {
             Ok(Some(PrefixOperation::Plus))
         } else if parser.next_token_expect(Token::Minus).is_ok() {
             Ok(Some(PrefixOperation::Negative))
-        } else if parser.next_token_expect(Keyword::Not.into()).is_ok()  {
+        } else if parser.next_token_expect(Keyword::Not.into()).is_ok() {
             Ok(Some(PrefixOperation::Not))
-        } else if parser.next_token_expect(Token::Exclamation).is_ok()  {
+        } else if parser.next_token_expect(Token::Exclamation).is_ok() {
             Ok(Some(PrefixOperation::Not))
         } else {
             Ok(None)
@@ -1047,7 +1047,7 @@ mod tests {
                     println!("contain negative");
                 };
                 if expr.contains(&|e| match e {
-                    BaseExpression::Operation(ast::Operation::Multiply(_,_)) => true,
+                    BaseExpression::Operation(ast::Operation::Multiply(_, _)) => true,
                     _ => false,
                 }) {
                     println!("contain multiple");

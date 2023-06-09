@@ -14,8 +14,8 @@ pub struct Scan {
 }
 
 impl Scan {
-    pub fn new(table: String, filter: Option<Expression>) -> Self {
-        Self { table, filter }
+    pub fn new(table: String, filter: Option<Expression>) -> Box<Self> {
+        Box::new(Self { table, filter })
     }
 }
 
@@ -39,8 +39,8 @@ pub struct KeyLookUp {
 }
 
 impl KeyLookUp {
-    pub fn new(table: String, values: Vec<Value>) -> Self {
-        Self { table, values }
+    pub fn new(table: String, values: Vec<Value>) -> Box<Self> {
+        Box::new(Self { table, values })
     }
 }
 
@@ -74,12 +74,12 @@ pub struct IndexLookUp {
 }
 
 impl IndexLookUp {
-    pub fn new(table: String, column: String, values: Vec<Value>) -> Self {
-        Self {
+    pub fn new(table: String, column: String, values: Vec<Value>) -> Box<Self> {
+        Box::new(Self {
             table,
             column,
             values,
-        }
+        })
     }
 }
 

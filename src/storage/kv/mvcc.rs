@@ -17,23 +17,27 @@ use std::{
     sync::{Arc, RwLock, RwLockReadGuard},
 };
 
-use super::Store;
+use super::SqlStore;
 use crate::errors::Result;
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Status {
+    /// 下一个事务号
     pub txns: u64,
+    /// 当前有多少个活跃事务
     pub txns_active: u64,
+    /// 当前的存储实现是什么
     pub storage: String,
 }
 
 #[derive(Clone)]
 pub struct MVCC {
-    store: Arc<RwLock<Box<dyn Store>>>,
+    store: Arc<RwLock<Box<dyn SqlStore>>>,
 }
 
 impl MVCC {
     /// 创建一个mvcc
-    pub fn new(store: Box<dyn Store>) -> Self {
+    pub fn new(store: Box<dyn SqlStore>) -> Self {
         Self {
             store: Arc::new(RwLock::new(store)),
         }
@@ -99,12 +103,23 @@ impl Mode {
             Mode::Snapshot { .. } => false,
         }
     }
+
+    /// 一个模式是否能够满足另一个模式，比如readwrite可以满足readonly and readwrite
+    /// snapshot 可以满足 readOnly 但是其他就不能互相满足了
+    pub fn satisfies(&self, other: &Mode) -> bool {
+        match (self, other) {
+            (Mode::ReadWrite, Mode::ReadOnly) => true,
+            (Mode::Snapshot { .. }, Mode::ReadOnly) => true,
+            (_, _) if self == other => true,
+            (_, _) => false,
+        }
+    }
 }
 
 /// An MVCC transaction.
 pub struct MvccTransaction {
     /// 存储
-    store: Arc<RwLock<Box<dyn Store>>>,
+    store: Arc<RwLock<Box<dyn SqlStore>>>,
     /// 唯一事务id
     id: u64,
     /// 事务模式
@@ -115,7 +130,7 @@ pub struct MvccTransaction {
 
 impl MvccTransaction {
     /// 开启一个事务
-    fn begin(store: Arc<RwLock<Box<dyn Store>>>, mode: Mode) -> Result<Self> {
+    fn begin(store: Arc<RwLock<Box<dyn SqlStore>>>, mode: Mode) -> Result<Self> {
         // 先找到新的
         let mut store_ = store.write()?;
         let next = store_.get(&Key::TxnNext.encode())?;
@@ -163,9 +178,10 @@ impl MvccTransaction {
     }
 
     /// 恢复一个旧的活跃事务
-    fn resume(store: Arc<RwLock<Box<dyn Store>>>, id: u64) -> Result<Self> {
+    fn resume(store: Arc<RwLock<Box<dyn SqlStore>>>, id: u64) -> Result<Self> {
         let store_ = store.read()?;
 
+        // 获得之前事务的mode
         let mode = match store_.get(&Key::TxnActive(id).encode())? {
             Some(v) => deserialize(&v)?,
             None => return Err(Error::Internal(format!("No active transaction {}", id))),
@@ -196,12 +212,11 @@ impl MvccTransaction {
 
     /// 提交一个事务
     pub fn commit(&self) -> Result<()> {
-        let mut store = self.store.write()?;
         // 将update key删除
         self.get_rollback_delete_update_key()?;
-
+        let mut store = self.store.write()?;
+        // 将活跃的事务删除一个
         store.delete(&Key::TxnActive(self.id).encode())?;
-
         store.flush()
     }
 
@@ -225,22 +240,25 @@ impl MvccTransaction {
             Key::TxnUpdate(self.id, vec![].into()).encode()
                 ..Key::TxnUpdate(self.id + 1, vec![].into()).encode(),
         ));
-        
+
         for item in scan {
-            let (k,_) = item?;
+            let (k, _) = item?;
             match Key::decode(&k)? {
                 Key::TxnUpdate(_, key) => {
                     // 把update 的key删除 已经不需要了
                     store.delete(&k)?;
                     roallback.push(key.into_owned());
-                },
+                }
                 k => {
-                    return Err(Error::Mvcc(format!("expect get txnUpdate key get : {:?}",k)))
-                },
+                    return Err(Error::Mvcc(format!(
+                        "expect get txnUpdate key get : {:?}",
+                        k
+                    )))
+                }
             };
         }
         store.flush()?;
-        return Ok(roallback)
+        return Ok(roallback);
     }
 
     /// 下面的操作都是recored相关的操作 所以获得的都应该是record
@@ -253,18 +271,19 @@ impl MvccTransaction {
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let store = self.store.read()?;
         //   从0版本到当前版本 获取
-        let scan = store.scan(MyRange::new(
+        let mut scan = store.scan(MyRange::new(
             Key::Record(key.into(), 0).encode()..Key::Record(key.into(), self.id).encode(),
         ));
 
         // 开始寻找我们需要的
-        for item in scan.into_iter().rev() {
+        for item in scan.rev() {
             let (k, v) = item?;
             // 将key 解码
             match Key::decode(&k)? {
                 Key::Record(_, version) => {
                     if self.snapshot.is_visible(version) {
-                        return deserialize(&v);
+                        let re = deserialize(&v);
+                        return re;
                     }
                 }
                 k => {
@@ -397,7 +416,7 @@ impl Snapshot {
     }
 
     /// 恢复当前活跃的事务id
-    fn restore(session: &RwLockReadGuard<Box<dyn Store>>, version: u64) -> Result<Self> {
+    fn restore(session: &RwLockReadGuard<Box<dyn SqlStore>>, version: u64) -> Result<Self> {
         match session.get(&Key::TxnSnapshot(version).encode())? {
             Some(ref v) => Ok(Self {
                 version,
@@ -555,7 +574,6 @@ impl DoubleEndedIterator for MvccScan {
         self.try_next_back().transpose()
     }
 }
-
 
 fn serialize<V: Serialize>(value: &V) -> Result<Vec<u8>> {
     Ok(bincode::serialize(value)?)

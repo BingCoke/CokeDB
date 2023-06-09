@@ -1,22 +1,24 @@
 use std::collections::{HashMap, HashSet};
 
+use log::debug;
+
 use crate::sql::{
     expression::{self, Expression},
     parser::ast::{BaseExpression, FromItem, JoinType, Operation, Statement},
     plan::Aggregate,
     schema::Catalog,
-    Column, Table, OrderType,
+    Column, OrderType, Table,
 };
 
 use super::{Node, Plan};
 use crate::errors::{Error, Result};
 
-pub struct Planner {
-    catalog: Box<dyn Catalog>,
+pub struct Planner<'a> {
+    catalog: &'a dyn Catalog,
 }
 
-impl Planner {
-    pub fn new(catalog: Box<dyn Catalog>) -> Self {
+impl<'a> Planner<'a> {
+    pub fn new(catalog: &'a dyn Catalog) -> Self {
         Self { catalog }
     }
 
@@ -25,7 +27,7 @@ impl Planner {
         Ok(Plan::new(node))
     }
 
-    fn build_node(&mut self, statement: Statement) -> Result<Node> {
+    pub fn build_node(&mut self, statement: Statement) -> Result<Node> {
         match statement {
             Statement::Begin { .. }
             | Statement::Commit
@@ -96,11 +98,6 @@ impl Planner {
                 };
                 let mut scope = Scope::new();
                 scope.register_table(table)?;
-                if values.len() != columns.len() {
-                    return Err(Error::Plan(format!(
-                        "unexpected values.len not equal columns.len"
-                    )));
-                }
 
                 // 检查一下这些column是否存在
                 for ele in columns.iter() {
@@ -251,7 +248,7 @@ impl Planner {
                         orders: order
                             .into_iter()
                             .map(|(expr, order_type)| {
-                               Result::Ok((self.build_expresion(&scope, expr)?, order_type))
+                                Result::Ok((self.build_expresion(&scope, expr)?, order_type))
                             })
                             .collect::<Result<Vec<(Expression, OrderType)>>>()?,
                     }
@@ -497,7 +494,8 @@ impl Planner {
         match from {
             FromItem::Table { name, alias } => {
                 // 如果是table 则是最底层的操作
-                let table = self.catalog.must_read_table(&name)?;
+                let table = self.catalog.must_read_table(&name);
+                let table = table?;
                 scope.register_table(table)?;
                 Ok(Node::Scan {
                     table: name,
@@ -789,8 +787,8 @@ impl Scope {
                 "constant scope can't register table".to_string(),
             ));
         }
-        let mut base = self.clone();
-        if base.tables.contains_key(&table.name) {
+
+        if self.tables.contains_key(&table.name) {
             return Err(Error::Plan(format!(
                 "try to register repeat table: {:?}",
                 table
@@ -799,19 +797,10 @@ impl Scope {
         let table_name = table.name.clone();
         for ele in table.columns.iter() {
             let column_name = ele.name.clone();
-            self.qualified.insert(
-                (table_name.clone(), column_name.clone()),
-                self.columns.len(),
-            );
-            if self.unqualified.contains_key(&column_name) {
-                self.unqualified.remove(&column_name);
-                self.ambiguous.insert(column_name);
-            } else {
-                self.unqualified.insert(column_name, self.columns.len());
-            }
+            debug!("register table {}, filed {}", &table_name, column_name);
+            self.add_column(Some(table_name.clone()), Some(column_name))
         }
-        base.tables.insert(table_name.clone(), table);
-        *self = base;
+        self.tables.insert(table_name.clone(), table);
         Ok(())
     }
 

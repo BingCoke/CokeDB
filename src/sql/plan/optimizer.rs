@@ -266,11 +266,17 @@ impl FilterPushdown {
 }
 
 ///  寻找索引
-pub struct IndexLookup {
-    catalog: Box<dyn Catalog>,
+pub struct IndexLookup<'a> {
+    catalog: &'a dyn Catalog,
 }
 
-impl Optimizer for IndexLookup {
+impl<'a> IndexLookup<'a> {
+    pub fn new(catalog: &'a dyn Catalog) -> Box<Self> {
+        Box::new(Self { catalog })
+    }
+}
+
+impl<'a> Optimizer for IndexLookup<'a> {
     fn optimize(&self, node: Node) -> Result<Node> {
         node.transform(
             &|n| match &n {
@@ -282,12 +288,9 @@ impl Optimizer for IndexLookup {
                     if let Some(mut filter) = filter.clone() {
                         let table = self.catalog.must_read_table(table.as_str())?;
 
-
                         let key_index = table.columns.iter().position(|e| e.primary_key).ok_or(
                             Error::Optimizer(format!("failed to get table:{} key", table.name)),
                         )?;
-
-
 
                         let indexs: Vec<(usize, String)> = table
                             .columns

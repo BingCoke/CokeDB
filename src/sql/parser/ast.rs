@@ -16,7 +16,7 @@ pub enum Statement {
 
     CreateTable {
         name: String,
-        columns: Vec<Column>,
+        columns: Vec<SqlClumn>,
     },
     DropTable(String),
 
@@ -73,11 +73,14 @@ pub enum JoinType {
 
 /// A column
 #[derive(Clone, Debug, PartialEq)]
-pub struct Column {
+pub struct SqlClumn {
     pub name: String,
     pub column_type: ColumnType,
     pub primary_key: bool,
     pub nullable: Option<bool>,
+    /// 这个就是为什么需要ast中专门构建一个column结构体的原因
+    /// default进行execute后期的时候应该是一个value
+    /// 现在只是一个初步的
     pub default: Option<BaseExpression>,
     pub unique: bool,
     pub index: bool,

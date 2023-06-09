@@ -4,55 +4,22 @@ pub mod planner;
 use core::fmt;
 use std::fmt::Display;
 
-use super::{expression::Expression, OrderType, Table, Value};
-use crate::errors::{Error, Result};
+use serde_derive::{Deserialize, Serialize};
 
-/// 聚合函数
-#[derive(Debug, PartialEq)]
-pub enum Aggregate {
-    /// 求和
-    Sum,
-    /// 平均
-    Average,
-    /// 计数
-    Count,
-    /// 求最大值
-    Max,
-    /// 最小值
-    Min,
-}
-
-impl Display for Aggregate {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Aggregate::Sum => "Sum",
-                Aggregate::Average => "Average",
-                Aggregate::Count => "Count",
-                Aggregate::Max => "Max",
-                Aggregate::Min => "Min",
-            }
-        )
-    }
-}
-
-impl Aggregate {
-    pub fn from_str(f: &str) -> Result<Aggregate> {
-        match f.to_uppercase().as_str() {
-            "MAX" => Ok(Self::Max),
-            "MIN" => Ok(Self::Min),
-            "SUM" => Ok(Self::Sum),
-            "COUNT" => Ok(Self::Count),
-            "AVERAGE" => Ok(Self::Average),
-            _ => Err(Error::Plan(format!("not support for aggregate: {}", f))),
-        }
-    }
-}
+use super::{
+    engine::Transaction,
+    execution::{Executor, ResultSet},
+    expression::Expression,
+    schema::Catalog,
+    OrderType, Table, Value,
+};
+use crate::{
+    errors::{Error, Result},
+    sql::plan::{optimizer::Optimizer, planner::Planner},
+};
 
 /// 执行节点
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum Node {
     CreateTable {
         table: Table,
@@ -135,9 +102,6 @@ pub enum Node {
     Nothing,
 }
 impl Node {
-
-
-
     /// 将node转化为另一个node
     pub fn transform<B, A>(mut self, before: &B, after: &A) -> Result<Self>
     where
@@ -222,9 +186,7 @@ impl Node {
         after(self)
     }
 
-
-
-     /// 转换node中的expression
+    /// 转换node中的expression
     pub fn transform_expressions<B, A>(self, before: &B, after: &A) -> Result<Self>
     where
         B: Fn(Expression) -> Result<Expression>,
@@ -239,21 +201,33 @@ impl Node {
             | n @ Self::IndexLookup { .. }
             | n @ Self::KeyLookup { .. }
             | n @ Self::Limit { .. }
-            | n @ Self::NestedLoopJoin { predicate: None, .. }
+            | n @ Self::NestedLoopJoin {
+                predicate: None, ..
+            }
             | n @ Self::Nothing
             | n @ Self::Offset { .. }
             | n @ Self::Scan { filter: None, .. } => n,
 
-            Self::Filter { source, predicate } => {
-                Self::Filter { source, predicate: predicate.transform(before, after)? }
-            }
+            Self::Filter { source, predicate } => Self::Filter {
+                source,
+                predicate: predicate.transform(before, after)?,
+            },
 
-            Self::Insert { table, columns, expressions } => Self::Insert {
+            Self::Insert {
+                table,
+                columns,
+                expressions,
+            } => Self::Insert {
                 table,
                 columns,
                 expressions: expressions
                     .into_iter()
-                    .map(|exprs| exprs.into_iter().map(|e| e.transform(before, after)).collect())
+                    .map(|exprs| {
+                        exprs
+                            .into_iter()
+                            .map(|e| e.transform(before, after))
+                            .collect()
+                    })
                     .collect::<Result<_>>()?,
             },
 
@@ -265,17 +239,24 @@ impl Node {
                     .collect::<Result<_>>()?,
             },
 
-            Self::NestedLoopJoin { left,  right, predicate: Some(predicate), outer, left_size } => {
-                Self::NestedLoopJoin {
-                    left,
-                    right,
-                    predicate: Some(predicate.transform(before, after)?),
-                    outer,
-                    left_size,
-                }
-            }
+            Self::NestedLoopJoin {
+                left,
+                right,
+                predicate: Some(predicate),
+                outer,
+                left_size,
+            } => Self::NestedLoopJoin {
+                left,
+                right,
+                predicate: Some(predicate.transform(before, after)?),
+                outer,
+                left_size,
+            },
 
-            Self::Projection { source, expressions } => Self::Projection {
+            Self::Projection {
+                source,
+                expressions,
+            } => Self::Projection {
                 source,
                 expressions: expressions
                     .into_iter()
@@ -283,9 +264,15 @@ impl Node {
                     .collect::<Result<_>>()?,
             },
 
-            Self::Scan { table, alias, filter: Some(filter) } => {
-                Self::Scan { table, alias, filter: Some(filter.transform(before, after)?) }
-            }
+            Self::Scan {
+                table,
+                alias,
+                filter: Some(filter),
+            } => Self::Scan {
+                table,
+                alias,
+                filter: Some(filter.transform(before, after)?),
+            },
 
             Self::Update { table, source, set } => Self::Update {
                 table,
@@ -297,9 +284,6 @@ impl Node {
             },
         })
     }
-
-
-
 
     // Displays the node, where prefix gives the node prefix.
     pub fn format(&self, mut indent: String, root: bool, last: bool) -> String {
@@ -505,8 +489,6 @@ impl Display for Node {
     }
 }
 
-
-
 pub struct Plan {
     node: Node,
 }
@@ -514,5 +496,71 @@ pub struct Plan {
 impl Plan {
     pub fn new(node: Node) -> Self {
         Self { node }
+    }
+
+    pub(crate) fn build(
+        state: super::parser::ast::Statement,
+        catalog: &'static dyn Catalog,
+    ) -> Result<Self> {
+        let node = Planner::new(catalog).build_node(state)?;
+        Ok(Self { node })
+    }
+
+    /// 进行节点优化
+    pub fn optimize(self, catalog: &dyn Catalog) -> Result<Self> {
+        let mut root = self.node;
+        root = optimizer::ConstantFolder.optimize(root)?;
+        root = optimizer::FilterPushdown.optimize(root)?;
+        root = optimizer::IndexLookup::new(catalog).optimize(root)?;
+        root = optimizer::JoinType.optimize(root)?;
+        root = optimizer::NoopCleaner.optimize(root)?;
+        Ok(Plan::new(root))
+    }
+    pub fn execute<T: Transaction + 'static>(self, txn: &mut T) -> Result<ResultSet> {
+        <dyn Executor<T>>::build(self.node).execute(txn)
+    }
+}
+
+/// 聚合函数
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub enum Aggregate {
+    /// 求和
+    Sum,
+    /// 平均
+    Average,
+    /// 计数
+    Count,
+    /// 求最大值
+    Max,
+    /// 最小值
+    Min,
+}
+
+impl Display for Aggregate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Aggregate::Sum => "Sum",
+                Aggregate::Average => "Average",
+                Aggregate::Count => "Count",
+                Aggregate::Max => "Max",
+                Aggregate::Min => "Min",
+            }
+        )
+    }
+}
+
+impl Aggregate {
+    pub fn from_str(f: &str) -> Result<Aggregate> {
+        match f.to_uppercase().as_str() {
+            "MAX" => Ok(Self::Max),
+            "MIN" => Ok(Self::Min),
+            "SUM" => Ok(Self::Sum),
+            "COUNT" => Ok(Self::Count),
+            "AVERAGE" => Ok(Self::Average),
+            _ => Err(Error::Plan(format!("not support for aggregate: {}", f))),
+        }
     }
 }

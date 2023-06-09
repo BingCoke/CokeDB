@@ -1,5 +1,6 @@
 pub mod mvcc;
 pub mod encoding;
+pub mod b_tree;
 use std::{ops::{Bound, RangeBounds}, fmt::Display};
 use crate::errors::*;
 
@@ -7,10 +8,9 @@ pub use mvcc::MVCC;
 
 
 /// A key/value 存储
-pub trait Store: Display + Send + Sync {
+pub trait SqlStore: Display + Send + Sync {
     /// 删除key
     fn delete(&mut self, key: &[u8]) -> Result<()>;
-
     /// flush数据
     fn flush(&mut self) -> Result<()>;
 
@@ -81,6 +81,5 @@ impl RangeBounds<Vec<u8>> for MyRange {
 
 
 pub type KvRange = Vec<Result<(Vec<u8>,Vec<u8>)>>;
-
 
 pub type Scan = Box<dyn DoubleEndedIterator<Item = Result<(Vec<u8>, Vec<u8>)>> + Send>;

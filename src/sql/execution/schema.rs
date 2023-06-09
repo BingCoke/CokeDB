@@ -8,6 +8,12 @@ pub struct CreateTable {
     table: Table,
 }
 
+impl CreateTable {
+    pub fn new(table: Table) -> Box<Self> {
+        Box::new(Self { table })
+    }
+}
+
 impl<T: Transaction> Executor<T> for CreateTable {
     fn execute(self: Box<Self>, txn: &mut T) -> Result<ResultSet> {
         let name = self.table.name.clone();
@@ -21,11 +27,10 @@ pub struct DeleteTable {
 }
 
 impl DeleteTable {
-    pub fn new(table: String) -> Self {
-        Self { table }
+    pub fn new(table: String) -> Box<Self> {
+        Box::new(Self { table })
     }
 }
-
 
 impl<T: Transaction> Executor<T> for DeleteTable {
     fn execute(self: Box<Self>, txn: &mut T) -> Result<ResultSet> {
@@ -33,4 +38,3 @@ impl<T: Transaction> Executor<T> for DeleteTable {
         Ok(ResultSet::DropTable { name: self.table })
     }
 }
-

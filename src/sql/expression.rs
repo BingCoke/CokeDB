@@ -1,15 +1,13 @@
-use std::{
-    clone,
-    fmt::{self, Display},
-};
+use std::fmt::{self, Display};
 
 use regex::Regex;
+use serde_derive::{Serialize, Deserialize};
 
 use super::Value;
 use crate::errors::{Error, Result};
 use std::convert::Into;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum Expression {
     /// 常量
     Constant(Value),
@@ -75,7 +73,7 @@ impl Expression {
         };
         after(self)
     }
-
+        
     /// 借用 进行转换
     pub fn transform_ref<A, B>(&mut self, before: &A, after: &B) -> Result<()>
     where

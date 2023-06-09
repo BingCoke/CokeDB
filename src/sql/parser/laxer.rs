@@ -440,8 +440,7 @@ impl<'a> Laxer<'a> {
         Ok(Some(Token::String(res)))
     }
 
-    // ident 开头必须是字母 后续才可以是 _ , 数字 其余报错
-
+    /// ident 开头必须是字母 后续才可以是 _ , 数字 其余报错
     /// 直接获得ident 注意这里需要查看一下是否有关键字
     fn get_ident(&mut self) -> Result<Option<Token>> {
         let mut res = String::new();

@@ -11,7 +11,6 @@ use crate::sql::Value;
 use crate::errors::*;
 
 
-
 use std::convert::TryInto;
 
 /// 编解码 0x00 是 false , 0x01 是 true.
@@ -108,7 +107,7 @@ pub fn take_f64(bytes: &mut &[u8]) -> Result<f64> {
 
 pub fn encode_i64(n: i64) -> [u8; 8] {
     let mut bytes = n.to_be_bytes();
-    bytes[0] ^= 1 << 7; // Flip left-most bit in the first byte, i.e. sign bit.
+    bytes[0] ^= 1 << 7;
     bytes
 }
 

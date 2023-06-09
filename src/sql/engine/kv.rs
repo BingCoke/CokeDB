@@ -10,6 +10,7 @@ use crate::sql::expression::Expression;
 use crate::sql::schema::Catalog;
 use crate::sql::{Table, Value};
 use crate::storage::kv;
+use crate::storage::kv::mvcc::Status;
 
 /// 一个基于kv的mvcc存储引擎
 
@@ -33,6 +34,10 @@ impl KV {
     /// 设置元数据
     pub fn set_metadata(&self, key: &[u8], value: Vec<u8>) -> Result<()> {
         self.kv.set_metadata(key, value)
+    }
+
+    pub(crate) fn get_statue(&self) -> Result<Status> {
+        self.kv.get_status()
     }
 }
 
@@ -98,7 +103,7 @@ impl super::Transaction for KvTransaction {
     fn create(&mut self, table: &str, row: super::Row) -> Result<()> {
         let table = self.must_read_table(table)?;
         // 检查数据是否正常
-        table.check_row(&row,self)?;
+        table.check_row(&row, self)?;
         // 查找主键
         let id = table.get_row_key(&row)?;
         self.txn.set(
@@ -216,7 +221,7 @@ impl super::Transaction for KvTransaction {
         let table = self.must_read_table(table)?;
 
         // 检查一遍
-        table.check_row(&row,self)?;
+        table.check_row(&row, self)?;
 
         // 如果是主键被更新了 那就要删除原数据 并创建一条新的数据
         // 但是这里有关问题 如果是连锁更新 比如 set id=id+1
@@ -293,7 +298,8 @@ impl super::Catalog for KvTransaction {
     fn read_table(&self, table: &str) -> Result<Option<Table>> {
         let table = self.txn.get(&SqlKey::Table(Some(table.into())).encode())?;
         if let Some(table) = table {
-            deserialize(&table)?
+            let r = Some(deserialize(&table)).transpose();
+            return r;
         }
         return Ok(None);
     }
