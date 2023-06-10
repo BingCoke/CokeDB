@@ -34,7 +34,7 @@ pub async fn main() -> Result<()> {
 #[command(name = "dbServer")]
 #[command(author = "bingcoke")]
 #[command(version = "1.0")]
-#[command(about = "this is db server")]
+#[command(about = "this is coke_db server")]
 #[derive(Debug)]
 struct DbSer {
     #[arg(short, long)]
