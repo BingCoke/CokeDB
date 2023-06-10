@@ -2,7 +2,7 @@ use std::fmt::{self, Display};
 
 use log::debug;
 use regex::Regex;
-use serde_derive::{Serialize, Deserialize};
+use serde_derive::{Deserialize, Serialize};
 
 use super::Value;
 use crate::errors::{Error, Result};
@@ -74,7 +74,7 @@ impl Expression {
         };
         after(self)
     }
-        
+
     /// 借用 进行转换
     pub fn transform_ref<A, B>(&mut self, before: &A, after: &B) -> Result<()>
     where
@@ -95,10 +95,10 @@ impl Expression {
             Self::Constant(c) => c.clone(),
 
             Self::Field(i, _) => {
-               let r = row.and_then(|row| row.get(*i).cloned()).unwrap_or(Null);
-               debug!("row {} get {}",i,r);
-               r
-            },
+                let r = row.and_then(|row| row.get(*i).cloned()).unwrap_or(Null);
+                debug!("row {} get {}", i, r);
+                r
+            }
 
             // 逻辑运算
             Self::And(lhs, rhs) => match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
@@ -330,7 +330,7 @@ impl Expression {
                 | Self::Like(lhs, rhs)
                 | Self::Multiply(lhs, rhs)
                 | Self::Or(lhs, rhs)
-                | Self::Subtract(lhs, rhs) => lhs.contains(predicate) && rhs.contains(predicate),
+                | Self::Subtract(lhs, rhs) => lhs.contains(predicate) || rhs.contains(predicate),
 
                 Self::Plus(expr) | Self::Negative(expr) | Self::IsNull(expr) | Self::Not(expr) => {
                     expr.contains(predicate)

@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use log::debug;
+
 use crate::errors::Result;
 use crate::sql::expression::Expression;
 use crate::sql::schema::Catalog;
@@ -218,18 +220,49 @@ impl FilterPushdown {
                     let cnf: Vec<Expression> = predicate.to_cnf_vec()?;
                     // 拿出来都是与连接的子句 这里就需要去汲取左表和右表的相关式子了
                     // 这里要注意 其实是排除含右表列的expression
+                    // 反选获得
                     let (left_expr, cnf): (Vec<Expression>, Vec<Expression>) =
                         cnf.into_iter().partition(|e| {
-                            !e.contains(
-                                &|expr| matches!(expr,Expression::Field(i, _) if i <= &left_size),
-                            )
+                            debug!("{:#?}", e);
+                            !e.contains(&|expr| match expr {
+                                Expression::Field(i, _) => {
+                                    if i >= &left_size {
+                                        debug!("left left_size : {}", i);
+                                        true
+                                    } else {
+                                        debug!("left left_size : {} return fasle", i);
+                                        false
+                                    }
+                                }
+                                _ => return false,
+                            })
                         });
                     let (right_expr, cnf): (Vec<Expression>, Vec<Expression>) =
                         cnf.into_iter().partition(|e| {
-                            !e.contains(
-                                &|expr| matches!(expr,Expression::Field(i, _) if i > &left_size),
-                            )
+                            !e.contains(&|expr| match expr {
+                                Expression::Field(i, _) => {
+                                    if i < &left_size {
+                                        debug!("left right : {}", i);
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                                _ => return false,
+                            })
                         });
+
+                    let right_expr = right_expr
+                        .into_iter()
+                        .map(|mut e| {
+                            e.transform_ref(&|c| Ok(c), &|c| match c {
+                                Expression::Field(i, f) => Ok(Expression::Field(i - left_size, f)),
+                                _ => Ok(c),
+                            })?;
+                            return Ok(e);
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+
                     // 此时cnf中包含的就是同时含有两个表的字段
                     // 将只包含左右表的字段进行下沉
                     left = Box::new(Self::push_down(*left, Expression::from_cnf_vec(left_expr))?);
@@ -296,8 +329,8 @@ impl<'a> Optimizer for IndexLookup<'a> {
                             .columns
                             .clone()
                             .into_iter()
-                            .filter(|e| e.index)
                             .enumerate()
+                            .filter(|(_, e)| e.index)
                             .map(|(i, e)| (i, e.name))
                             .collect();
 
@@ -319,8 +352,8 @@ impl<'a> Optimizer for IndexLookup<'a> {
                                 return Ok(node);
                             }
 
-                            for (index, name) in indexs.clone().into_iter() {
-                                if let Some(vals) = e.look_up(index) {
+                            for (i_index, name) in indexs.clone().into_iter() {
+                                if let Some(vals) = e.look_up(i_index) {
                                     cnf.remove(index);
                                     let mut node = Node::IndexLookup {
                                         table: table.name.clone(),

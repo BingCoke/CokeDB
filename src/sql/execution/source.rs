@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use log::debug;
+
 /// source文件，最低层的执行器，用于执行扫描文件
 use crate::sql::{engine::Transaction, execution::ResultSet, expression::Expression, Value};
 
@@ -21,6 +23,7 @@ impl Scan {
 
 impl<T: Transaction> Executor<T> for Scan {
     fn execute(self: Box<Self>, txn: &mut T) -> Result<super::ResultSet> {
+        debug!("table {:#?} , scan filter {:#?}",self.table,self.filter);
         let rows = txn.scan(&self.table, self.filter)?;
         let columns: Vec<_> = txn
             .must_read_table(&self.table)?

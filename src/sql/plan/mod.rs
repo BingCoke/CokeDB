@@ -512,8 +512,8 @@ impl Plan {
         //root = optimizer::ConstantFolder.optimize(root)?;
         root = optimizer::FilterPushdown.optimize(root)?;
         root = optimizer::IndexLookup::new(catalog).optimize(root)?;
-        root = optimizer::JoinType.optimize(root)?;
-        root = optimizer::NoopCleaner.optimize(root)?;
+        //root = optimizer::JoinType.optimize(root)?;
+        //root = optimizer::NoopCleaner.optimize(root)?;
         Ok(Plan::new(root))
     }
     pub fn execute<T: Transaction + 'static>(self, txn: &mut T) -> Result<ResultSet> {
