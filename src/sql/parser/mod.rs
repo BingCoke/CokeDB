@@ -211,6 +211,7 @@ impl<'a> Parser<'a> {
         let mut res = BTreeMap::new();
         loop {
             let column = self.next_ident()?;
+            self.next_token_expect(Token::Equal)?;
             let expression = self.parse_expression(0)?;
             res.insert(column, expression);
             if self.next_token_expect(Token::Comma).is_err() {
@@ -633,7 +634,7 @@ impl<'a> Parser<'a> {
                     Ok(BaseExpression::Field(table, filed))
                 }
             }
-            t => Err(Error::Parse(format!("expect get an atom get:{}", t))),
+            t => Err(Error::Parse(format!("expect an atom get:{}", t))),
         }
     }
 

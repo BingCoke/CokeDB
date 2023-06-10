@@ -47,7 +47,7 @@ impl SqlStore for BtreeStore {
     }
 
     fn set(&mut self, key: &[u8], value: Vec<u8>) -> Result<()> {
-        self.data.insert(key.to_vec(), value);
+        let r = self.data.insert(key.to_vec(), value);
         Ok(())
     }
 }

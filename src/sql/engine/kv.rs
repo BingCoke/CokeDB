@@ -102,12 +102,22 @@ impl super::Transaction for KvTransaction {
 
     fn create(&mut self, table: &str, row: super::Row) -> Result<()> {
         let table = self.must_read_table(table)?;
-        // 检查数据是否正常
+        // 检查数据是否正常 包括检查唯一索引
         table.check_row(&row, self)?;
         // 查找主键
         let id = table.get_row_key(&row)?;
+        // 先去查看是否有同样的key or index
+        if self.read(&table.name, &id)?.is_some() {
+            return Err(Error::Executor(format!(
+                "Primary key {} already exists for table {}",
+                id, table.name
+            )));
+        };
+
         self.txn.set(
-            &SqlKey::Table(Some(table.name.clone().into())).encode(),
+            // 插入 table+index为key,放入树中
+            //&SqlKey::Row(Some(table.name.clone().into())).encode(),
+            &SqlKey::Row(Cow::Borrowed(&table.name), Some(Cow::Borrowed(&id))).encode(),
             serialize(&row)?,
         )?;
         // 设置索引
