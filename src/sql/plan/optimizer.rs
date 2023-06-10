@@ -221,13 +221,13 @@ impl FilterPushdown {
                     let (left_expr, cnf): (Vec<Expression>, Vec<Expression>) =
                         cnf.into_iter().partition(|e| {
                             !e.contains(
-                                &|expr| matches!(expr,Expression::Field(i, _) if i >= &left_size),
+                                &|expr| matches!(expr,Expression::Field(i, _) if i <= &left_size),
                             )
                         });
                     let (right_expr, cnf): (Vec<Expression>, Vec<Expression>) =
                         cnf.into_iter().partition(|e| {
                             !e.contains(
-                                &|expr| matches!(expr,Expression::Field(i, _) if i < &left_size),
+                                &|expr| matches!(expr,Expression::Field(i, _) if i > &left_size),
                             )
                         });
                     // 此时cnf中包含的就是同时含有两个表的字段

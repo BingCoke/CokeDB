@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 
+use log::debug;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::*;
@@ -156,6 +157,7 @@ impl super::Transaction for KvTransaction {
             .txn
             .get(&SqlKey::Row(table.into(), Some(id.clone().into())).encode())?;
         let r: Option<std::result::Result<Row, Error>> = r.map(|val| deserialize(&val));
+        debug!("get row{:#?}",r);
         return r.transpose();
     }
 

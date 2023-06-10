@@ -54,7 +54,9 @@ impl<T: Transaction> NestedLoopJoin<T> {
                 } else {
                     base_res.push(row)
                 }
+                
             }
+            res.extend(base_res);
             // 没有找到 并且 是个外连接
             if res.len() == 0 && outer {
                 let mut row = lrow.clone();

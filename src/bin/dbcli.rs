@@ -17,7 +17,7 @@ use std::result::Result as R;
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut logconfig = simplelog::ConfigBuilder::new();
-    let loglevel = simplelog::LevelFilter::Debug;
+    let loglevel = simplelog::LevelFilter::Info;
     logconfig.add_filter_allow_str("coke_db");
     simplelog::SimpleLogger::init(loglevel, logconfig.build())?;
 

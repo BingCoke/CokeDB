@@ -262,9 +262,9 @@ impl<'a> Planner<'a> {
                 }
 
                 if let Some(limit) = limit {
-                    node = Node::Offset {
+                    node = Node::Limit {
                         source: Box::new(node),
-                        offset: self.build_expresion(&Scope::constant(), limit)?,
+                        limit: self.build_expresion(&Scope::constant(), limit)?,
                     }
                 }
 
@@ -752,7 +752,7 @@ impl Scope {
                             .columns
                             .get(*i)
                             .cloned()
-                            .ok_or_else(|| Error::Plan("".to_string()))?;
+                            .unwrap_or((None,None));
                         scope.add_column(table, label);
                     }
                     // 其他情况就是不需要上层节点通过label找到我 只能通过index

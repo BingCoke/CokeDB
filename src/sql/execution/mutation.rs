@@ -122,10 +122,10 @@ impl<T: Transaction> Executor<T> for Update<T> {
                         row, key_index
                     )))?;
                     // clone新的row
-                    let new = row.clone();
+                    let mut new = row.clone();
                     // 设置新的new
                     for (index, exp) in self.expression.iter() {
-                        row[*index] = exp.evaluate(Some(&row))?;
+                        new[*index] = exp.evaluate(Some(&row))?;
                     }
 
                     txn.update(&table.name, &pk, new)?;
@@ -133,7 +133,7 @@ impl<T: Transaction> Executor<T> for Update<T> {
                     count += 1;
                 }
 
-                Ok(ResultSet::Delete { count })
+                Ok(ResultSet::Update { count })
             }
             r => Err(Error::Executor(format!(
                 "expect get query ersult set but get {:?}",

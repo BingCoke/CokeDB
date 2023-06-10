@@ -40,6 +40,7 @@ impl<'a> Parser<'a> {
                 Ok(Token::Keyword(Keyword::Update)) => self.parse_update_statement(),
                 Ok(Token::Keyword(Keyword::Delete)) => self.parse_delete_statement(),
                 Ok(Token::Keyword(Keyword::Insert)) => self.parse_insert_statement(),
+                Ok(Token::Keyword(Keyword::Explain)) => self.parse_explain(),
                 Ok(t) => Err(Error::Parse(format!("get unexpected token: {}", t))),
                 Err(e) => Err(e.clone()),
             },

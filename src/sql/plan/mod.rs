@@ -490,7 +490,7 @@ impl Display for Node {
 }
 
 pub struct Plan {
-    node: Node,
+    pub node: Node,
 }
 
 impl Plan {
@@ -509,7 +509,7 @@ impl Plan {
     /// 进行节点优化
     pub fn optimize(self, catalog: &dyn Catalog) -> Result<Self> {
         let mut root = self.node;
-        root = optimizer::ConstantFolder.optimize(root)?;
+        //root = optimizer::ConstantFolder.optimize(root)?;
         root = optimizer::FilterPushdown.optimize(root)?;
         root = optimizer::IndexLookup::new(catalog).optimize(root)?;
         root = optimizer::JoinType.optimize(root)?;

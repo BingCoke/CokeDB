@@ -1,3 +1,4 @@
+use log::debug;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_derive::Deserialize as DeserializeDerive;
@@ -271,10 +272,10 @@ impl MvccTransaction {
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let store = self.store.read()?;
         //   从0版本到当前版本 获取
-        let mut scan = store.scan(MyRange::new(
+        let scan = store.scan(MyRange::new(
             Key::Record(key.into(), 0).encode()..Key::Record(key.into(), self.id).encode(),
         ));
-
+        let mut res = Ok(None);
         // 开始寻找我们需要的
         for item in scan.rev() {
             let (k, v) = item?;
@@ -283,6 +284,8 @@ impl MvccTransaction {
                 Key::Record(_, version) => {
                     if self.snapshot.is_visible(version) {
                         let re = deserialize(&v);
+                        debug!("get version record {}",version);
+                        //res = re;
                         return re;
                     }
                 }
@@ -295,7 +298,7 @@ impl MvccTransaction {
             }
         }
         // 没有就是none
-        Ok(None)
+        res
     }
 
     /// 根据范围获得多个数据

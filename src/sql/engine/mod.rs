@@ -92,7 +92,7 @@ impl<E: Engine + 'static> SqlSession<E> {
     }
 
     pub fn execute(&mut self, sql: &str) -> Result<ResultSet> {
-        debug!("execute sql : {}",sql);
+        debug!("execute sql : {}", sql);
         let r: Result<ResultSet> = match Parser::new(sql).parse()? {
             // begin 分为几种情况
             crate::sql::parser::ast::Statement::Begin { .. } if self.txn.is_some() => Err(
@@ -142,21 +142,20 @@ impl<E: Engine + 'static> SqlSession<E> {
                 Ok(ResultSet::Rollback { id })
             }
             crate::sql::parser::ast::Statement::Explain(state) => {
-                let txn = self.txn.take().unwrap();
-                let mut planner = Planner::new(&txn);
-                //let plan = planner.build_plan(*state);
-                let node = planner.build_node(*state)?;
-                Ok(ResultSet::Explain(node))
+                self.with_txn(Mode::ReadOnly, |txn| {
+                    Ok(ResultSet::Explain(
+                        Planner::new(txn).build_plan(*state)?.optimize(txn)?.node,
+                    ))
+                })
             }
-
             // 如果当前有一个事务在进行
             statement if self.txn.is_some() => {
                 //let mut txn = self.txn.as_mut().unwrap();
-                let mut txn = self.txn.take().unwrap();
-                Planner::new(&txn)
+                let txn = self.txn.as_mut().unwrap();
+                Planner::new(txn)
                     .build_plan(statement)?
-                    .optimize(&txn)?
-                    .execute(&mut txn)
+                    .optimize(txn)?
+                    .execute(txn)
             }
             // 没有事务在进行
             statement => {

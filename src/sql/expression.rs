@@ -1,5 +1,6 @@
 use std::fmt::{self, Display};
 
+use log::debug;
 use regex::Regex;
 use serde_derive::{Serialize, Deserialize};
 
@@ -93,7 +94,11 @@ impl Expression {
             // 常量计算
             Self::Constant(c) => c.clone(),
 
-            Self::Field(i, _) => row.and_then(|row| row.get(*i).cloned()).unwrap_or(Null),
+            Self::Field(i, _) => {
+               let r = row.and_then(|row| row.get(*i).cloned()).unwrap_or(Null);
+               debug!("row {} get {}",i,r);
+               r
+            },
 
             // 逻辑运算
             Self::And(lhs, rhs) => match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
