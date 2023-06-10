@@ -229,6 +229,7 @@ impl<'a> Planner<'a> {
                         .into_iter()
                         .map(|(e, l)| Ok((self.build_expresion(&scope, e)?, l)))
                         .collect::<Result<_>>()?;
+
                     scope.project(&expressions)?;
                     node = Node::Projection {
                         source: Box::new(node),
@@ -316,6 +317,7 @@ impl<'a> Planner<'a> {
                     if index < aggregates.len() {
                         // 聚合操作不需要上层节点知道 聚合操作都被转换了 没有意义
                         // 执行的时候通过column(i) 拿取数据就好了
+                        // sum(i)
                         (Expression::Constant(crate::sql::Value::Null), None)
                     } else {
                         // 上层节点只能拿到group by的字段
@@ -328,7 +330,10 @@ impl<'a> Planner<'a> {
         )?;
 
         Ok(Node::Aggregation {
-            source: Box::new(source),
+            source: Box::new(Node::Projection {
+                source: Box::new(source),
+                expressions,
+            }),
             aggregates,
         })
     }
@@ -386,7 +391,7 @@ impl<'a> Planner<'a> {
                     continue;
                 } else {
                     return Err(Error::Plan(format!(
-                        "can't find label of group_by :{}",
+                        "can't find label of group_by : {}",
                         label
                     )));
                 }
@@ -748,11 +753,7 @@ impl Scope {
                     }
                     // 没有label 我就去找上层节点的label 复用上层节点的
                     (Expression::Field(i, _), None) => {
-                        let (table, label) = scope
-                            .columns
-                            .get(*i)
-                            .cloned()
-                            .unwrap_or((None,None));
+                        let (table, label) = self.columns.get(*i).cloned().unwrap_or((None, None));
                         scope.add_column(table, label);
                     }
                     // 其他情况就是不需要上层节点通过label找到我 只能通过index

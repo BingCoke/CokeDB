@@ -65,6 +65,7 @@ pub enum Node {
         /// 后面的option是label 如果是None则使用上层传来的column label
         expressions: Vec<(Expression, Option<String>)>,
     },
+    /// 聚合
     Aggregation {
         source: Box<Node>,
         aggregates: Vec<Aggregate>,
@@ -561,6 +562,15 @@ impl Aggregate {
             "COUNT" => Ok(Self::Count),
             "AVERAGE" => Ok(Self::Average),
             _ => Err(Error::Plan(format!("not support for aggregate: {}", f))),
+        }
+    }
+    pub fn to_string(&self) -> String {
+        match self {
+            Aggregate::Sum => "Sum".to_string(),
+            Aggregate::Average => "Average".to_string(),
+            Aggregate::Count => "Count".to_string(),
+            Aggregate::Max => "Max".to_string(),
+            Aggregate::Min => "Min".to_string(),
         }
     }
 }
