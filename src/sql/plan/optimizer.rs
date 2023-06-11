@@ -403,9 +403,9 @@ impl Optimizer for JoinType {
                     Some(Expression::Equal(e1, e2)) => match (*e1, *e2) {
                         (Field(i1, l1), Field(i2, l2)) => {
                             let (left_field, right_field) = if i1 < i2 {
-                                ((i1, l1), (i2, l2))
+                                ((i1, l1), (i2 - left_size, l2))
                             } else {
-                                ((i2, l2), (i1, l1))
+                                ((i2, l2), (i1 - left_size, l1))
                             };
 
                             Ok(Node::HashJoin {

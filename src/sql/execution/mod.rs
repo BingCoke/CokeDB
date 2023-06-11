@@ -35,7 +35,7 @@ impl<T: Transaction + 'static> dyn Executor<T> {
             Node::Aggregation { source, aggregates } => {
                 Aggregation::new(Self::build(*source), aggregates)
             }
-            Node::CreateTable { table, defaults } => CreateTable::new(table),
+            Node::CreateTable { table, defaults } => CreateTable::new(table,defaults),
             Node::Delete { table, source } => Delete::new(table, Self::build(*source)),
             Node::DropTable { table } => DeleteTable::new(table),
             Node::Filter { source, predicate } => Filter::new(Self::build(*source), predicate),

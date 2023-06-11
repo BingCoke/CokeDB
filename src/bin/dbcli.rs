@@ -24,6 +24,7 @@ async fn main() -> Result<()> {
     let c1 = DbCli::parse();
 
     println!("try to connect {}:{}", c1.host, c1.port);
+    println!("use try to input \"!h\" to get help");
     let client = Client::new(&c1.host, c1.port).await?;
 
     run(client).await?;
@@ -73,6 +74,16 @@ impl Cli {
                     .ok_or_else(|| Error::Parse("get unexpect end".to_string()))
             };
             match getnext()? {
+                "!h" | "!help" => {
+                    println!(
+                        "
+ctrl+c => quit
+!tables => get all tables
+!table <table> => get table
+!status => get status
+"
+                    )
+                }
                 "!tables" => {
                     let tables = self.client.list_tables().await?;
                     println!("show tables");
@@ -83,7 +94,11 @@ impl Cli {
                 "!table" => {
                     let table = getnext()?;
                     let table = self.client.get_table(table).await?;
-                    println!("get table {:?}", table);
+                    println!("get table {:#?}", table);
+                }
+                "!status" => {
+                    let status = self.client.get_status().await?;
+                    println!("server status {:#?}", status);
                 }
                 de => {}
             }
