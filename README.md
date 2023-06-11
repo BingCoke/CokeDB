@@ -5,7 +5,7 @@ CokeDB 是由 rust 语言编写，基于 KV 存储的关系型数据库。
 
 ## 该项目目前的特性
 
-- 基于优先爬升算法实现表达式解析生成语法解析树，基于火山模型生成抽象语法树
+- 基于优先爬升算法实现表达式解析生成语法解析树，基于迭代器模型执行sql计算
 - 支持 sql 解析 filter, joins, aggregate, projections 等
 - 实现谓词下推，索引等优化
 - 实现 mvcc 多版本并发控制，实现可重复读隔离级别
@@ -164,7 +164,7 @@ DROP  TABLE <table_name>
 
 ### Select
 
-支持多表联查，算术基本计算，聚合函数，排序, limit, offset 等
+支持多表联查, 算术基本计算, 聚合函数, 排序, limit, offset 等
 
 ```coke_db
 coke_db >> select (1.0+4)/2 as res ;
